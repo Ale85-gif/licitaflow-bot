@@ -1,0 +1,17 @@
+# Ambiente virtual
+.venv/
+
+# Estado interno do Claude Code
+.claude/
+
+# Credenciais e sessao (sensivel / gerado em runtime)
+chaves.json
+*.key
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Perfis de navegador / sessao local (gerados em runtime)
+perfil_comprasnet/
+chrome-real/
