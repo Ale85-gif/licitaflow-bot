@@ -64,6 +64,27 @@ Ou rodar cada bot separadamente:
 > Chrome já estiver aberto com esse mesmo perfil, essa etapa não faz nada
 > (o Chrome só permite uma instância por perfil).
 
+## Banco de dados local (`dados.db`)
+
+Além da planilha do Google, os dois bots também gravam os mesmos dados num
+banco SQLite local (`dados.db`, na raiz do projeto) — um canal rápido para
+outros programas seus consumirem sem passar pela API/cota do Google Sheets.
+A cada execução as tabelas são recriadas do zero (mesmo comportamento das
+abas correspondentes no Sheets: sempre refletem o estado da última rodada).
+
+| Tabela              | Origem                                    | Conteúdo                                      |
+|----------------------|-------------------------------------------|------------------------------------------------|
+| `pregoes_itens`      | `Bot comprasnet .py` (aba `BD_CONSOLIDADO`) | Um item por linha, de todos os pregões ativos |
+| `pregoes_indice`     | `Bot comprasnet .py` (aba `INDICE_PREGOES`) | Um resumo por pregão (status, vigência, saldo) |
+| `participacao_itens` | `bot_participante.py` (aba `PARTICIPAÇÃO`)  | Um item por linha, das atas em que a PMB participa |
+
+Todas as colunas são gravadas como texto (`TEXT`), do mesmo jeito que aparecem
+na planilha. Exemplo de consulta:
+
+```powershell
+.venv\Scripts\python -c "import sqlite3; conn = sqlite3.connect('dados.db'); print(conn.execute('SELECT * FROM pregoes_indice LIMIT 5').fetchall())"
+```
+
 ## Segurança
 
 - `chaves.json`, `*.key`, `.venv/` e perfis de navegador locais estão no

@@ -19,6 +19,7 @@ from comum import (
     log,
     normalizar_espacos,
     parse_data_br,
+    salvar_sqlite,
     update_com_retry,
 )
 
@@ -1383,6 +1384,8 @@ def atualizar_aba_banco_dados(planilha, registros_com_itens):
         update_com_retry(ws, "A1", [bd_headers])
         log("Nenhum item ativo localizado para alimentar a base de dados.")
 
+    salvar_sqlite("pregoes_itens", bd_headers, linhas_bd[1:])
+
 
 # =========================================================
 # ÍNDICE GERAL DOS PREGÕES
@@ -1411,6 +1414,7 @@ def atualizar_indice(planilha, registros_salvos: list[dict]) -> None:
         ])
 
     update_com_retry(ws, "A1", linhas)
+    salvar_sqlite("pregoes_indice", linhas[0], linhas[1:])
 
 
 # =========================================================

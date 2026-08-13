@@ -1,5 +1,6 @@
 import os
 import re
+import sqlite3
 import subprocess
 import time
 from datetime import datetime
@@ -17,6 +18,8 @@ CHAVE_JSON = "chaves.json"
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 PERFIL = r"C:\chrome-real"
+
+DB_PATH = "dados.db"
 
 
 def log(msg: str) -> None:
@@ -108,6 +111,37 @@ def clear_com_retry(ws, tentativas=6, pausa=2.0):
                 time.sleep(espera)
             else:
                 raise
+
+
+# =========================================================
+# SQLITE LOCAL (canal rápido para sistemas próprios,
+# sem depender da API/cota do Google Sheets)
+# =========================================================
+
+def salvar_sqlite(nome_tabela: str, headers: list, linhas: list) -> None:
+    """Recria a tabela `nome_tabela` em DB_PATH com as colunas de `headers`
+    e insere `linhas` (dump completo, mesmo dado que vai para a aba
+    correspondente no Google Sheets)."""
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        cur = conn.cursor()
+        colunas = ", ".join(f'"{h}" TEXT' for h in headers)
+
+        cur.execute(f'DROP TABLE IF EXISTS "{nome_tabela}"')
+        cur.execute(f'CREATE TABLE "{nome_tabela}" ({colunas})')
+
+        placeholders = ", ".join("?" for _ in headers)
+        cur.executemany(
+            f'INSERT INTO "{nome_tabela}" VALUES ({placeholders})',
+            [[("" if v is None else str(v)) for v in linha] for linha in linhas]
+        )
+
+        conn.commit()
+        log(f"SQLite: tabela '{nome_tabela}' atualizada com {len(linhas)} linha(s) em {DB_PATH}")
+
+    finally:
+        conn.close()
 
 
 # =========================================================

@@ -15,6 +15,9 @@ __pycache__/
 # Logs de execucao
 *.log
 
+# Banco de dados local (dump dos dados coletados, gerado em runtime)
+*.db
+
 # Perfis de navegador / sessao local (gerados em runtime)
 perfil_comprasnet/
 chrome-real/

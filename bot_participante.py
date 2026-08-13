@@ -15,6 +15,7 @@ from comum import (
     log,
     normalizar_espacos,
     parse_data_br,
+    salvar_sqlite,
     update_com_retry,
 )
 
@@ -319,6 +320,8 @@ def gravar_aba(planilha, nome_aba: str, linhas: list[list]) -> None:
 
     fim = rowcol_to_a1(len(linhas), len(ITEM_HEADERS))
     update_com_retry(ws, f"A1:{fim}", linhas)
+
+    salvar_sqlite("participacao_itens", linhas[0], linhas[1:])
 
 
 def salvar_participacao(planilha, registros_com_itens: list[dict]) -> None:
