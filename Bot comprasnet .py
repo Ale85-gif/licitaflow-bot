@@ -1,7 +1,5 @@
 import asyncio
-import os
 import re
-import subprocess
 import sys
 import time
 import traceback
@@ -14,6 +12,7 @@ from playwright.async_api import async_playwright
 from comum import (
     CHAVE_JSON,
     PLANILHA_ID,
+    abrir_chrome,
     clear_com_retry,
     conectar_google,
     get_or_create_worksheet,
@@ -45,9 +44,6 @@ from comum import (
 # =========================================================
 # CONFIG
 # =========================================================
-
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-PERFIL = r"C:\chrome-real"
 
 URL_HOME = "https://contratos.sistema.gov.br"
 URL_LISTA_BASE = "https://contratos.sistema.gov.br/compras?unidade_origem_id=9822"
@@ -259,21 +255,7 @@ def classificar_status_pregao(itens: list[dict]) -> str:
 # =========================================================
 # CHROME / GOOGLE
 # =========================================================
-
-def abrir_chrome() -> None:
-    if not os.path.exists(CHROME):
-        raise FileNotFoundError(f"Chrome não encontrado em: {CHROME}")
-
-    log("Abrindo Chrome com depuração...")
-
-    subprocess.Popen([
-        CHROME,
-        "--remote-debugging-port=9222",
-        f"--user-data-dir={PERFIL}"
-    ])
-
-    time.sleep(5)
-
+# abrir_chrome -> comum.py
 
 def testar_google(planilha) -> None:
     ws = get_or_create_worksheet(planilha, "TESTE_BOT", rows=20, cols=5)

@@ -7,16 +7,18 @@ relevantes para a PMB.
 ## O que cada arquivo faz
 
 - **`comum.py`** — funções e constantes compartilhadas (log, conexão com Google
-  Sheets, retry contra erro 429 de cota).
+  Sheets, retry contra erro 429 de cota, abrir/fechar o Chrome de automação).
 - **`Bot comprasnet .py`** — varre os pregões em que a PMB é **unidade
   gerenciadora**. Abre o Chrome (com depuração remota), navega no portal, extrai
   os itens de cada pregão e grava em abas individuais na planilha, além de
   `INDICE_PREGOES` e `BD_CONSOLIDADO`.
 - **`bot_participante.py`** — varre as atas de registro de preços em que a PMB é
-  **participante** (não gerenciadora) e grava tudo na aba `PARTICIPAÇÃO`. Não abre
-  o Chrome sozinho: reaproveita a conexão já aberta pelo bot anterior.
-- **`executar_bots.py`** — orquestrador: roda o bot gerenciador e depois o bot de
-  participação, em sequência.
+  **participante** (não gerenciadora) e grava tudo na aba `PARTICIPAÇÃO`. Também
+  abre seu próprio Chrome de automação ao iniciar.
+- **`executar_bots.py`** — orquestrador: roda o bot gerenciador, **encerra o
+  Chrome de automação** e só então roda o bot de participação com um Chrome
+  novo — evita reaproveitar uma instância que ficou horas aberta e parou de
+  responder ao CDP.
 
 ## Pré-requisitos
 
@@ -54,15 +56,13 @@ Ou rodar cada bot separadamente:
 .venv\Scripts\python bot_participante.py
 ```
 
-> `Bot comprasnet .py` abre o Chrome sozinho (com
-> `--remote-debugging-port=9222 --user-data-dir=C:\chrome-real`) e espera 5s
+> Os dois bots abrem o Chrome sozinhos (com
+> `--remote-debugging-port=9222 --user-data-dir=C:\chrome-real`) e esperam 5s
 > antes de continuar — pode ser necessário fazer login manualmente no portal
 > gov.br na primeira execução, já que o perfil do Chrome (`C:\chrome-real`)
-> fica fora da pasta do projeto e persiste a sessão entre execuções.
->
-> `bot_participante.py` **não** abre o Chrome — se for rodado sozinho (sem
-> passar por `executar_bots.py` logo depois do bot gerenciador), o Chrome com
-> depuração remota na porta 9222 já precisa estar aberto.
+> fica fora da pasta do projeto e persiste a sessão entre execuções. Se o
+> Chrome já estiver aberto com esse mesmo perfil, essa etapa não faz nada
+> (o Chrome só permite uma instância por perfil).
 
 ## Segurança
 

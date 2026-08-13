@@ -3,10 +3,17 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from comum import fechar_chrome_automacao
+
 # =========================================================
 # ORQUESTRADOR: roda o bot gerenciador (pregões da PMB) e,
 # em seguida, o bot de participação (atas onde a PMB participa
 # ou gerencia, listadas em contratos.sistema.gov.br/arp).
+#
+# Entre os dois bots, encerra o Chrome de automação e deixa
+# cada bot abrir sua própria instância — evita que o segundo
+# bot tente reaproveitar um Chrome que ficou muitas horas aberto
+# e não responde mais ao CDP.
 # =========================================================
 
 PASTA = Path(__file__).resolve().parent
@@ -42,6 +49,10 @@ def main():
     log("Iniciando execução completa (gerenciador + participação)...")
 
     ok_gerenciador = rodar_bot(BOT_GERENCIADOR, "Bot comprasnet (pregões PMB gerenciadora)")
+
+    log("Encerrando Chrome da automação antes do próximo bot (evita reaproveitar uma sessão degradada)...")
+    fechar_chrome_automacao()
+
     ok_participacao = rodar_bot(BOT_PARTICIPACAO, "Bot participação (atas PMB gerenciadora + participante)")
 
     log("=== Resumo final ===")

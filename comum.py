@@ -1,4 +1,6 @@
+import os
 import re
+import subprocess
 import time
 from datetime import datetime
 
@@ -12,6 +14,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 PLANILHA_ID = "1wy8i8nuUkBFezSeySfnnPw06TVLxhwaXrwEGIoxOewU"
 CHAVE_JSON = "chaves.json"
+
+CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+PERFIL = r"C:\chrome-real"
 
 
 def log(msg: str) -> None:
@@ -103,3 +108,40 @@ def clear_com_retry(ws, tentativas=6, pausa=2.0):
                 time.sleep(espera)
             else:
                 raise
+
+
+# =========================================================
+# CHROME (automação com depuração remota)
+# =========================================================
+
+def abrir_chrome() -> None:
+    if not os.path.exists(CHROME):
+        raise FileNotFoundError(f"Chrome não encontrado em: {CHROME}")
+
+    log("Abrindo Chrome com depuração...")
+
+    subprocess.Popen([
+        CHROME,
+        "--remote-debugging-port=9222",
+        f"--user-data-dir={PERFIL}"
+    ])
+
+    time.sleep(5)
+
+
+def fechar_chrome_automacao() -> None:
+    """Encerra somente o Chrome aberto com o perfil de automação (PERFIL),
+    sem afetar outras janelas/perfis de Chrome que o usuário tenha abertos."""
+    log("Encerrando Chrome da automação (perfil de depuração)...")
+
+    subprocess.run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+            f"Where-Object {{ $_.CommandLine -like '*{PERFIL}*' }} | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+        ],
+        capture_output=True,
+    )
+
+    time.sleep(2)

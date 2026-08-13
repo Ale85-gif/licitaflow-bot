@@ -8,6 +8,7 @@ from gspread.utils import rowcol_to_a1
 from playwright.async_api import async_playwright
 
 from comum import (
+    abrir_chrome,
     clear_com_retry,
     conectar_google,
     get_or_create_worksheet,
@@ -32,6 +33,8 @@ from comum import (
 # - Uma linha por item na aba PARTICIPAÇÃO (nao cria aba por ata)
 # - Nao deleta nada na planilha: apenas limpa e reescreve a aba
 #   PARTICIPAÇÃO por completo a cada execucao
+# - Abre o proprio Chrome (perfil de automacao) no inicio, para nao
+#   depender de uma instancia do Chrome aberta por outro processo
 # - Salva progresso parcial periodicamente (checkpoint), para nao
 #   perder tudo se a execucao for interrompida no meio
 # =========================================================
@@ -330,6 +333,7 @@ def salvar_participacao(planilha, registros_com_itens: list[dict]) -> None:
 
 async def main():
     try:
+        abrir_chrome()
         planilha = conectar_google()
 
         async with async_playwright() as p:
