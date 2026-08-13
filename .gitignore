@@ -12,6 +12,9 @@ chaves.json
 __pycache__/
 *.pyc
 
+# Logs de execucao
+*.log
+
 # Perfis de navegador / sessao local (gerados em runtime)
 perfil_comprasnet/
 chrome-real/
