@@ -19,7 +19,7 @@ from comum import fechar_chrome_automacao
 PASTA = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
-BOT_GERENCIADOR = PASTA / "Bot comprasnet .py"
+BOT_GERENCIADOR = PASTA / "Bot comprasnet rapido.py"
 BOT_PARTICIPACAO = PASTA / "bot_participante.py"
 
 

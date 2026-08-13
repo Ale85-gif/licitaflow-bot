@@ -7,24 +7,34 @@ relevantes para a PMB.
 ## O que cada arquivo faz
 
 - **`comum.py`** — funções e constantes compartilhadas (log, conexão com Google
-  Sheets, retry contra erro 429 de cota, abrir/fechar o Chrome de automação).
-- **`Bot comprasnet .py`** — varre os pregões em que a PMB é **unidade
-  gerenciadora**. Abre o Chrome (com depuração remota), navega no portal, extrai
-  os itens de cada pregão e grava em abas individuais na planilha, além de
-  `INDICE_PREGOES` e `BD_CONSOLIDADO`.
+  Sheets, retry contra erro 429 de cota, abrir/fechar o Chrome de automação,
+  export para SQLite).
+- **`Bot comprasnet rapido.py`** — **versão em uso** pelo orquestrador. Varre os
+  pregões em que a PMB é **unidade gerenciadora**: a listagem de pregões/itens
+  usa Chrome (Playwright), mas o detalhe de cada item é buscado via requisição
+  HTTP direta (reaproveitando os cookies da sessão logada) em paralelo — ~13x
+  mais rápido que abrir uma aba por item. Grava em abas individuais na
+  planilha, além de `INDICE_PREGOES` e `BD_CONSOLIDADO`.
+- **`Bot comprasnet .py`** — versão original (100% Playwright, um item por
+  aba). Mantida como referência/fallback caso o portal mude algo que quebre a
+  versão HTTP mas não a versão com navegador completo. Não é chamada pelo
+  `executar_bots.py`.
 - **`bot_participante.py`** — varre as atas de registro de preços em que a PMB é
   **participante** (não gerenciadora) e grava tudo na aba `PARTICIPAÇÃO`. Também
   abre seu próprio Chrome de automação ao iniciar.
-- **`executar_bots.py`** — orquestrador: roda o bot gerenciador, **encerra o
-  Chrome de automação** e só então roda o bot de participação com um Chrome
-  novo — evita reaproveitar uma instância que ficou horas aberta e parou de
-  responder ao CDP.
+- **`bot_criar_ata.py`** — **em construção**. Vai criar (não só ler) uma Ata de
+  Registro de Preços no Contratos.gov.br. Por enquanto só investiga a tela de
+  criação (`/arp/create`), sem preencher/enviar nada.
+- **`executar_bots.py`** — orquestrador: roda o bot gerenciador (versão rápida),
+  **encerra o Chrome de automação** e só então roda o bot de participação com
+  um Chrome novo — evita reaproveitar uma instância que ficou muitas horas
+  aberta e parou de responder ao CDP.
 
 ## Pré-requisitos
 
 1. Python 3.11+ instalado.
 2. Google Chrome instalado em `C:\Program Files\Google\Chrome\Application\chrome.exe`
-   (caminho fixo em `Bot comprasnet .py`; ajuste a constante `CHROME` se o seu
+   (caminho fixo em `comum.py`; ajuste a constante `CHROME` se o seu
    Chrome estiver em outro lugar).
 3. Um arquivo `chaves.json` na raiz do projeto, com as credenciais de uma
    Service Account do Google com acesso de edição à planilha (Google Sheets API
@@ -52,7 +62,7 @@ Rodar tudo (gerenciador + participação), na ordem certa:
 Ou rodar cada bot separadamente:
 
 ```powershell
-.venv\Scripts\python "Bot comprasnet .py"
+.venv\Scripts\python "Bot comprasnet rapido.py"
 .venv\Scripts\python bot_participante.py
 ```
 
@@ -74,8 +84,8 @@ abas correspondentes no Sheets: sempre refletem o estado da última rodada).
 
 | Tabela              | Origem                                    | Conteúdo                                      |
 |----------------------|-------------------------------------------|------------------------------------------------|
-| `pregoes_itens`      | `Bot comprasnet .py` (aba `BD_CONSOLIDADO`) | Um item por linha, de todos os pregões ativos |
-| `pregoes_indice`     | `Bot comprasnet .py` (aba `INDICE_PREGOES`) | Um resumo por pregão (status, vigência, saldo) |
+| `pregoes_itens`      | `Bot comprasnet rapido.py` (aba `BD_CONSOLIDADO`) | Um item por linha, de todos os pregões ativos |
+| `pregoes_indice`     | `Bot comprasnet rapido.py` (aba `INDICE_PREGOES`) | Um resumo por pregão (status, vigência, saldo) |
 | `participacao_itens` | `bot_participante.py` (aba `PARTICIPAÇÃO`)  | Um item por linha, das atas em que a PMB participa |
 
 Todas as colunas são gravadas como texto (`TEXT`), do mesmo jeito que aparecem
