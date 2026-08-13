@@ -4,6 +4,8 @@ import traceback
 from datetime import date
 from urllib.parse import urljoin
 
+import httpx
+from bs4 import BeautifulSoup
 from gspread.utils import rowcol_to_a1
 from playwright.async_api import async_playwright
 
@@ -36,12 +38,18 @@ from comum import (
 #   PARTICIPAÇÃO por completo a cada execucao
 # - Abre o proprio Chrome (perfil de automacao) no inicio, para nao
 #   depender de uma instancia do Chrome aberta por outro processo
+# - O detalhe de cada ata (tabela "Item da ata") e buscado via HTTP
+#   direto em paralelo (reaproveitando os cookies da sessao logada),
+#   em vez de navegar pagina por pagina no navegador - mesma tecnica
+#   usada no Bot comprasnet rapido.py
 # - Salva progresso parcial periodicamente (checkpoint), para nao
 #   perder tudo se a execucao for interrompida no meio
 # =========================================================
 
 URL_HOME = "https://contratos.sistema.gov.br"
 URL_ARP = "https://contratos.sistema.gov.br/arp"
+
+HTTP_CONCORRENCIA = 6  # requisições simultâneas de detalhe de ata
 
 ABA_PARTICIPACAO = "PARTICIPAÇÃO"
 
@@ -196,16 +204,16 @@ async def coletar_todas_atas_pmb(page) -> list[dict]:
 
 
 # =========================================================
-# PORTAL - DETALHE DA ATA (TABELA "ITEM DA ATA")
+# PORTAL - DETALHE DA ATA VIA HTTP (rápido, em paralelo)
 # =========================================================
 
-async def extrair_link_pncp(page) -> str:
-    """Le (sem clicar/navegar) a URL do botao 'PNCP' na secao Acoes do detalhe da ata."""
+def extrair_link_pncp_html(soup: BeautifulSoup) -> str:
+    """Le a URL do botao 'PNCP' na secao Acoes do detalhe da ata."""
     try:
-        link = await page.query_selector("a[title='PNCP']")
+        link = soup.select_one("a[title='PNCP']")
 
         if link:
-            href = await link.get_attribute("href")
+            href = link.get("href")
             return urljoin(URL_HOME, href) if href else ""
 
     except Exception:
@@ -214,47 +222,47 @@ async def extrair_link_pncp(page) -> str:
     return ""
 
 
-async def extrair_itens_da_ata(page, url_detalhe: str) -> tuple[list[dict], str, str]:
+async def extrair_itens_da_ata_via_http(client: httpx.AsyncClient, sem: asyncio.Semaphore, url_detalhe: str) -> tuple[list[dict], str, str]:
     """Retorna (lista_de_itens, observacao, link_pncp). observacao vazia = sucesso."""
+    async with sem:
+        try:
+            resp = await client.get(url_detalhe, timeout=30.0)
+        except Exception as e:
+            return [], f"Falha ao abrir detalhe: {e}", ""
+
+    if "/login" in str(resp.url):
+        return [], "Sessão expirada (redirecionado para login)", ""
+
+    if resp.status_code != 200:
+        return [], f"HTTP {resp.status_code}", ""
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    link_pncp = extrair_link_pncp_html(soup)
+
     try:
-        await page.goto(url_detalhe, wait_until="domcontentloaded")
-        await page.wait_for_selector("table", timeout=15000)
-        await page.wait_for_timeout(500)
-    except Exception as e:
-        return [], f"Falha ao abrir detalhe: {e}", ""
-
-    link_pncp = await extrair_link_pncp(page)
-
-    try:
-        linhas_info = await page.query_selector_all("table > tbody > tr")
-
         tabela_itens = None
 
-        for linha in linhas_info:
-            try:
-                cels = await linha.query_selector_all(":scope > td")
+        for linha in soup.select("table > tbody > tr"):
+            cels = linha.find_all("td", recursive=False)
 
-                if len(cels) < 2:
-                    continue
-
-                rotulo = normalizar_espacos(await cels[0].inner_text()).rstrip(":")
-
-                if rotulo == "Item da ata":
-                    tabela_itens = await cels[1].query_selector("table")
-                    break
-
-            except Exception:
+            if len(cels) < 2:
                 continue
+
+            rotulo = normalizar_espacos(cels[0].get_text()).rstrip(":")
+
+            if rotulo == "Item da ata":
+                tabela_itens = cels[1].find("table")
+                break
 
         if tabela_itens is None:
             return [], "Sem tabela 'Item da ata' no detalhe", link_pncp
 
-        linhas_item = await tabela_itens.query_selector_all("tbody tr")
+        linhas_item = tabela_itens.select("tbody tr")
         itens = []
 
         for linha in linhas_item:
-            cels = await linha.query_selector_all("td")
-            valores = [normalizar_espacos(await c.inner_text()) for c in cels]
+            cels = linha.find_all("td")
+            valores = [normalizar_espacos(c.get_text()) for c in cels]
 
             if not any(valores):
                 continue
@@ -282,6 +290,36 @@ async def extrair_itens_da_ata(page, url_detalhe: str) -> tuple[list[dict], str,
 
     except Exception as e:
         return [], f"Falha ao extrair itens: {e}", link_pncp
+
+
+async def _processar_ata_via_http(client: httpx.AsyncClient, sem: asyncio.Semaphore, ata: dict) -> tuple[list[dict], str, str]:
+    if not ata["link"]:
+        return [], "Sem link de detalhe", ""
+
+    return await extrair_itens_da_ata_via_http(client, sem, ata["link"])
+
+
+async def coletar_atas_via_http(page, atas: list[dict]) -> list:
+    """Busca o detalhe (itens + link PNCP) de cada ata via HTTP direto, em
+    paralelo (limitado por HTTP_CONCORRENCIA), reaproveitando os cookies da
+    sessão logada no Chrome. Retorna uma lista de tuplas
+    (itens, observacao, link_pncp) na mesma ordem de `atas`."""
+    cookies_pw = await page.context.cookies()
+    cookies = {c["name"]: c["value"] for c in cookies_pw}
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "pt-BR,pt;q=0.9",
+    }
+
+    sem = asyncio.Semaphore(HTTP_CONCORRENCIA)
+
+    async with httpx.AsyncClient(cookies=cookies, headers=headers, follow_redirects=True) as client:
+        tarefas = [_processar_ata_via_http(client, sem, ata) for ata in atas]
+        return await asyncio.gather(*tarefas)
 
 
 # =========================================================
@@ -369,16 +407,12 @@ async def main():
                 ]
                 log(f"Filtrando para só situação Ativa e vigência em dia (Vig. Fim >= hoje): {len(atas)} de {len(atas_participante)} atas.")
 
-                log("Iniciando coleta detalhada dos itens de cada ata (isso é a fase mais demorada)...")
+                log(f"Buscando detalhe de {len(atas)} ata(s) via HTTP (concorrência={HTTP_CONCORRENCIA})...")
+                resultados = await coletar_atas_via_http(page, atas)
 
                 registros_com_itens = []
 
-                for i, ata in enumerate(atas, start=1):
-                    if not ata["link"]:
-                        registros_com_itens.append({**ata, "itens": [], "observacao": "Sem link de detalhe", "link_pncp": ""})
-                        continue
-
-                    itens, observacao, link_pncp = await extrair_itens_da_ata(page, ata["link"])
+                for i, (ata, (itens, observacao, link_pncp)) in enumerate(zip(atas, resultados), start=1):
                     registros_com_itens.append({**ata, "itens": itens, "observacao": observacao, "link_pncp": link_pncp})
 
                     if i % 10 == 0 or i == len(atas):
