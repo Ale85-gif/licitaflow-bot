@@ -95,6 +95,19 @@ na planilha. Exemplo de consulta:
 .venv\Scripts\python -c "import sqlite3; conn = sqlite3.connect('dados.db'); print(conn.execute('SELECT * FROM pregoes_indice LIMIT 5').fetchall())"
 ```
 
+## Execução agendada e logs
+
+O `executar_bots.py` está configurado no Agendador de Tarefas do Windows
+(`ComprasnetBot_PMB`) pra rodar sozinho a cada 1h, das 10h às 17h — só quando
+o usuário está logado (o Chrome precisa de sessão interativa).
+
+Cada execução (manual ou agendada) grava seu próprio log em `logs/
+execucao_AAAA-MM-DD_HH-MM-SS.log`, com a saída completa dos dois bots. Logs
+com mais de 14 dias são apagados automaticamente no início de cada execução.
+Se qualquer um dos dois bots falhar, `executar_bots.py` termina com código de
+saída diferente de zero — isso aparece no Agendador de Tarefas do Windows
+como falha, então dá pra notar sem precisar abrir o log.
+
 ## Segurança
 
 - `chaves.json`, `*.key`, `.venv/` e perfis de navegador locais estão no
