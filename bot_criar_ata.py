@@ -187,28 +187,158 @@ async def baixar_pdf_artefato(pagina_view, destino: str) -> None:
 # =========================================================
 # FORNECEDORES / ITENS HOMOLOGADOS DO PREGÃO
 # =========================================================
-# TODO: ainda não implementado como função testada via script.
-# Mapeado manualmente (ver conversa): tela
-# .../comprasnet-web/seguro/governo/selecao-fornecedores
+# Tela: .../comprasnet-web/seguro/governo/selecao-fornecedores
 # ?identificador=<UASG><modalidade 2 dig><numero 5 dig><ano>&etapa=AH
-# aba "Fornecedores" lista CNPJ + razão social + "Itens habilitados:
-# X de Y". Expandir cada fornecedor mostra 2 tabelas: "Itens em que
-# o fornecedor é o melhor classificado" (USAR) e "...não é o melhor
-# classificado" (IGNORAR, mesmo que apareça "Homologado"). Cada
-# item tem um "+" que expande e mostra Quantidade ofertada,
-# Marca/Fabricante, Modelo/Versão, Valor ofertado (unitário/total).
+# (ou etapa=FR se o pregão estiver em Fase Recursal — a etapa exata
+# não importa pro conteúdo da aba Fornecedores, só muda o título).
+#
+# IMPORTANTE: não dá pra abrir essa URL direto (nem em aba nova) —
+# o app redireciona pra "acesso não autorizado". É preciso navegar
+# clicando a partir da Área de Trabalho (achar o card do pregão e
+# clicar no link/ação dele), com espera generosa (~8s) depois de
+# carregar a Área de Trabalho antes de clicar, senão o clique cai
+# num estado stale e a navegação falha ("Compra não encontrada").
+#
+# Na aba "Fornecedores": cada fornecedor é uma linha com CNPJ, razão
+# social e "Itens habilitados: X de Y". Pra expandir e ver os itens,
+# NÃO adianta clicar na linha/texto — precisa clicar especificamente
+# no <button aria-expanded="..."> daquela linha (ícone de seta que
+# gira). Expandido, aparecem 2 blocos de itens:
+#   - "Itens em que o fornecedor é o melhor classificado" -> USAR
+#     (são os itens homologados de fato pra esse fornecedor)
+#   - "Itens em que o fornecedor não é o melhor classificado" ->
+#     IGNORAR (mesmo que o status individual diga "Homologado" —
+#     confirmado pelo usuário que esses NÃO contam pra esse fornecedor)
+#
+# Cada item nesses blocos mostra: número, descrição curta, status,
+# valor estimado e valor ofertado. Quantidade ofertada / Marca /
+# Modelo (que também precisamos, ver estrutura da Ata) ficam atrás
+# de um "+" de expansão por item — AINDA NÃO TESTADO ao vivo.
 
 
-async def coletar_fornecedores_itens(page, identificador: str) -> list[dict]:
-    """AINDA NÃO IMPLEMENTADO / NÃO TESTADO.
-    Deve navegar até a tela de seleção de fornecedores do pregão
-    (usando `identificador`) e retornar, por fornecedor, a lista de
-    itens homologados com quantidade/marca/modelo/valor unitário.
+_RE_ITEM_MELHOR_CLASSIFICADO = re.compile(
+    r"(\d+)\s+([^\n]+)\n"
+    r"(Homologado|Julgado[^\n]*)\s*"
+    r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)"
+)
+
+
+_RE_LINHA_GRUPO = re.compile(r"^\|\s*(\d+)\s*itens?$", re.IGNORECASE)
+
+
+def _parsear_itens_melhor_classificado(bloco_texto: str) -> list[dict]:
+    """Extrai os itens do bloco de texto entre 'Itens em que o
+    fornecedor é o melhor classificado' e o próximo marcador (fim do
+    fornecedor ou bloco 'não é o melhor classificado').
+
+    Quando o fornecedor venceu um GRUPO inteiro (disputa "menor preço
+    por grupo"), a tela mostra uma linha-resumo ("<grupo> | N itens")
+    em vez de item por item — essas linhas viram entradas com
+    "eh_grupo": True e SEM número de item de verdade (ainda não
+    implementamos a expansão de grupo em itens individuais — ver TODO).
+    Nunca inventamos números de item pra esses casos.
     """
-    raise NotImplementedError(
-        "Ainda não implementado — precisa testar ao vivo os seletores da tela "
-        "de seleção de fornecedores (expandir fornecedor, expandir item)."
-    )
+    itens = []
+    for m in _RE_ITEM_MELHOR_CLASSIFICADO.finditer(bloco_texto):
+        descricao = _limpar(m.group(2))
+        m_grupo = _RE_LINHA_GRUPO.match(descricao)
+
+        if m_grupo:
+            itens.append({
+                "eh_grupo": True,
+                "grupo": m.group(1),
+                "qtd_itens_grupo": m_grupo.group(1),
+                "status": _limpar(m.group(3)),
+                "valor_estimado": m.group(4),
+                "valor_ofertado": m.group(5),
+            })
+            continue
+
+        itens.append({
+            "eh_grupo": False,
+            "numero_item": m.group(1),
+            "descricao_curta": descricao,
+            "status": _limpar(m.group(3)),
+            "valor_estimado": m.group(4),
+            "valor_ofertado": m.group(5),
+        })
+
+    return itens
+
+
+async def _expandir_fornecedor(page, linha_locator) -> bool:
+    """Clica no botão de expandir (aria-expanded) dentro da linha do
+    fornecedor. Retorna True se conseguiu expandir."""
+    botao = linha_locator.locator("button[aria-expanded]").first
+
+    if await botao.count() == 0:
+        return False
+
+    if (await botao.get_attribute("aria-expanded")) == "true":
+        return True  # já estava expandido
+
+    await botao.scroll_into_view_if_needed()
+    await botao.click()
+    await page.wait_for_timeout(1200)
+
+    return (await botao.get_attribute("aria-expanded")) == "true"
+
+
+async def coletar_fornecedores_itens(page) -> list[dict]:
+    """Deve ser chamada com `page` já na tela de seleção de
+    fornecedores (aba 'Fornecedores' visível — clique nela se
+    necessário antes de chamar esta função).
+
+    Expande cada fornecedor com itens habilitados > 0 e retorna uma
+    lista de {"cnpj", "fornecedor", "itens": [...]}, onde cada item
+    tem numero_item/descricao_curta/status/valor_estimado/valor_ofertado
+    (ainda SEM quantidade/marca/modelo — ver TODO no topo do arquivo).
+    """
+    aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
+    if await aba_fornecedores.count() > 0:
+        await aba_fornecedores.click()
+        await page.wait_for_timeout(2000)
+
+    linhas = page.locator("div.cp-item-expansivel")
+    total = await linhas.count()
+    log(f"Total de fornecedores na listagem: {total}")
+
+    resultado = []
+
+    for i in range(total):
+        linha = linhas.nth(i)
+        texto_linha_fechada = await linha.inner_text()
+
+        m_habilitados = re.search(r"Itens habilitados\s*\n?\s*(\d+) de (\d+)", texto_linha_fechada)
+        if not m_habilitados or m_habilitados.group(1) == "0":
+            continue
+
+        m_cnpj = re.search(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto_linha_fechada)
+        cnpj = m_cnpj.group(0) if m_cnpj else ""
+
+        expandiu = await _expandir_fornecedor(page, linha)
+        if not expandiu:
+            log(f"  ⚠ Não consegui expandir fornecedor {cnpj} — pulando.")
+            continue
+
+        texto_expandido = await linha.inner_text()
+
+        # Corta só o trecho "melhor classificado" (ignora o bloco "não é o melhor classificado")
+        idx_inicio = texto_expandido.find("melhor classificado")
+        idx_fim = texto_expandido.find("não é o melhor classificado")
+        bloco = texto_expandido[idx_inicio:idx_fim] if idx_fim > 0 else texto_expandido[idx_inicio:]
+
+        itens = _parsear_itens_melhor_classificado(bloco)
+
+        # Nome do fornecedor: primeira linha de texto antes de "Itens habilitados"
+        nome_match = re.search(r"\n([A-ZÀ-Ÿ0-9][^\n]*)\nItens habilitados", texto_linha_fechada)
+        nome = _limpar(nome_match.group(1)) if nome_match else ""
+
+        log(f"  {cnpj} {nome}: {len(itens)} item(ns) melhor classificado (esperado: {m_habilitados.group(1)})")
+
+        resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens})
+
+    return resultado
 
 
 def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05") -> str:
