@@ -213,7 +213,37 @@ async def baixar_pdf_artefato(pagina_view, destino: str) -> None:
 # Cada item nesses blocos mostra: número, descrição curta, status,
 # valor estimado e valor ofertado. Quantidade ofertada / Marca /
 # Modelo (que também precisamos, ver estrutura da Ata) ficam atrás
-# de um "+" de expansão por item — AINDA NÃO TESTADO ao vivo.
+# de expansões adicionais — MECÂNICA TESTADA E CONFIRMADA:
+#
+# ITEM AVULSO (não-grupo): dentro do bloco "melhor classificado" da
+# aba Fornecedores, cada item tem um botão-chevron
+# (`button:has(i.fa-chevron-down)`) que expande INLINE (sem navegar)
+# e revela Descrição detalhada, Quantidade ofertada, Marca/Fabricante,
+# Modelo/Versão — ver expandir_item_individual().
+#
+# ITEM VENCIDO POR GRUPO (linha "GRUPO N | X itens"): não dá pra
+# expandir inline, é preciso navegar por uma cadeia de 3 cliques:
+#   1. Na linha do grupo (já expandida, dentro do fornecedor), clicar
+#      no botão com ícone `fa-plus-square` -> navega pra
+#      .../item/<id>?identificador=... (visão geral do grupo, lista
+#      TODOS os fornecedores que disputaram aquele grupo, não só o
+#      nosso alvo).
+#   2. Nessa página, achar a linha do CNPJ do fornecedor alvo e
+#      clicar no botão `button[aria-expanded]` (aria-label="Mostrar
+#      proposta do grupo") -> expande e revela um bloco "PROPOSTA"
+#      terminando num botão/link com texto "Itens do grupo >>"
+#      (cuidado: não confundir com o texto explicativo mais longo
+#      "Visualize as propostas dos itens do grupo..." que também
+#      contém a substring "itens do grupo" — procurar especificamente
+#      um elemento <button> ou <a> com esse texto, não texto solto).
+#   3. Clicar nesse "Itens do grupo >>" -> navega pra
+#      .../item/<id>/itens-grupo/participante/<cnpj-sem-formatacao>,
+#      que lista cada item do grupo (mesma estrutura de card com
+#      chevron de expansão do item avulso) -> usar
+#      expandir_item_individual() em cada um.
+#
+# Depois de coletar, tem que voltar (botão "Voltar" ou re-navegar)
+# antes de continuar pro próximo fornecedor/grupo.
 
 
 _RE_ITEM_MELHOR_CLASSIFICADO = re.compile(
@@ -282,6 +312,129 @@ async def _expandir_fornecedor(page, linha_locator) -> bool:
     await page.wait_for_timeout(1200)
 
     return (await botao.get_attribute("aria-expanded")) == "true"
+
+
+_RE_ITEM_EXPANDIDO = re.compile(
+    r"Descrição detalhada\n(?P<descricao_detalhada>[^\n]+)\n"
+    r".*?"
+    r"Quantidade ofertada\n(?P<quantidade_ofertada>[\d.,]+)\n"
+    r"Marca/Fabricante\n(?P<marca>[^\n]*)\n"
+    r"Modelo/Vers[ãa]o\n(?P<modelo>[^\n]*)",
+    re.DOTALL,
+)
+
+
+def _parsear_item_expandido(texto: str) -> dict:
+    """Extrai os dados que só aparecem depois de expandir um item
+    (individual ou dentro de um grupo): descrição detalhada,
+    quantidade ofertada, marca/fabricante, modelo/versão."""
+    m = _RE_ITEM_EXPANDIDO.search(texto)
+    if not m:
+        return {}
+    return {
+        "descricao_detalhada": _limpar(m.group("descricao_detalhada")),
+        "quantidade_ofertada": _limpar(m.group("quantidade_ofertada")),
+        "marca": _limpar(m.group("marca")),
+        "modelo": _limpar(m.group("modelo")),
+    }
+
+
+async def expandir_item_individual(item_locator, page) -> dict:
+    """Clica no chevron de expansão de UM item (funciona tanto pra
+    item avulso na aba Fornecedores quanto pra item dentro da tela
+    'Itens do grupo') e retorna o detalhe extraído (ver
+    _parsear_item_expandido). Não faz nada se já estiver expandido."""
+    chevron = item_locator.locator("button:has(i.fa-chevron-down)").first
+
+    if await chevron.count() > 0:
+        await chevron.scroll_into_view_if_needed()
+        await chevron.click()
+        await page.wait_for_timeout(1200)
+
+    texto = await item_locator.inner_text()
+    return _parsear_item_expandido(texto)
+
+
+async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornecedor: str) -> list[dict]:
+    """A partir da linha 'GRUPO N | X itens' já visível (dentro do
+    fornecedor expandido, na aba Fornecedores), navega pela cadeia de
+    3 cliques documentada no topo do arquivo e retorna a lista de
+    itens do grupo com todos os dados (número, descrição, marca,
+    modelo, quantidade ofertada, valor unitário ofertado).
+
+    Deixa `page` na tela final (.../itens-grupo/participante/<cnpj>)
+    — quem chamar essa função é responsável por voltar/renavegar pra
+    continuar coletando os próximos fornecedores/grupos depois.
+
+    STATUS: cada passo da cadeia foi validado individualmente ao vivo
+    (clique no "+", clique em "Mostrar proposta do grupo", clique em
+    "Itens do grupo >>", expansão de item com expandir_item_individual).
+    A função COMBINADA ainda não passou num teste de ponta a ponta sem
+    falhas: numa tentativa, o passo de achar `cnpj_fornecedor` na visão
+    geral do grupo falhou com o pregão na etapa "Fase Recursal" (etapa=FR)
+    — funcionou quando testado manualmente em "Adjudicação/Homologação"
+    (etapa=AH). Pode ser que a tela mostre menos informação/formatação
+    diferente do CNPJ nessa fase, ou pode ter sido só timing. Precisa
+    testar de novo com o pregão numa etapa estável antes de confiar
+    nessa função em produção — não usar sem validar de novo.
+    """
+    botao_mais = linha_grupo_locator.locator("button:has(i.fa-plus-square)").first
+    if await botao_mais.count() == 0:
+        log("  ⚠ Não achei o botão '+' na linha do grupo.")
+        return []
+
+    await botao_mais.scroll_into_view_if_needed()
+    await botao_mais.click()
+    await page.wait_for_timeout(2000)
+
+    # Visão geral do grupo: lista TODOS os fornecedores que disputaram
+    # esse grupo, não só o nosso alvo — precisa achar a linha certa.
+    linha_fornecedor = page.get_by_text(cnpj_fornecedor, exact=False).first
+    if await linha_fornecedor.count() == 0:
+        log(f"  ⚠ Não achei o fornecedor {cnpj_fornecedor} na visão geral do grupo.")
+        return []
+
+    linha_fornecedor_container = linha_fornecedor.locator(
+        "xpath=ancestor::div[contains(@class,'cp-item-expansivel')]"
+    ).first
+
+    if not await _expandir_fornecedor(page, linha_fornecedor_container):
+        log(f"  ⚠ Não consegui expandir a proposta do fornecedor {cnpj_fornecedor} no grupo.")
+        return []
+
+    link_itens_grupo = page.locator("button, a").filter(has_text="Itens do grupo").first
+    if await link_itens_grupo.count() == 0:
+        log("  ⚠ Não achei o link 'Itens do grupo >>'.")
+        return []
+
+    await link_itens_grupo.scroll_into_view_if_needed()
+    await link_itens_grupo.click()
+    await page.wait_for_timeout(2500)
+
+    cards_item = page.locator("div.cp-item-expansivel")
+    total_cards = await cards_item.count()
+
+    itens = []
+    for i in range(total_cards):
+        card = cards_item.nth(i)
+        texto_fechado = await card.inner_text()
+
+        m_num = re.match(r"(\d+)\s+([^\n]+)", texto_fechado)
+        if not m_num:
+            continue
+
+        detalhe = await expandir_item_individual(card, page)
+        m_valor = re.search(r"Valor ofertado \(unitário\)\D*R\$\s*([\d.,]+)", texto_fechado)
+
+        itens.append({
+            "eh_grupo": False,
+            "numero_item": m_num.group(1),
+            "descricao_curta": _limpar(m_num.group(2)),
+            "valor_unitario_ofertado": m_valor.group(1) if m_valor else "",
+            **detalhe,
+        })
+
+    return itens
 
 
 async def coletar_fornecedores_itens(page) -> list[dict]:
