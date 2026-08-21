@@ -215,85 +215,45 @@ async def baixar_pdf_artefato(pagina_view, destino: str) -> None:
 # Modelo (que também precisamos, ver estrutura da Ata) ficam atrás
 # de expansões adicionais — MECÂNICA TESTADA E CONFIRMADA:
 #
-# ITEM AVULSO (não-grupo): dentro do bloco "melhor classificado" da
-# aba Fornecedores, cada item tem um botão-chevron
-# (`button:has(i.fa-chevron-down)`) que expande INLINE (sem navegar)
-# e revela Descrição detalhada, Quantidade ofertada, Marca/Fabricante,
-# Modelo/Versão — ver expandir_item_individual().
+# Tanto item avulso quanto linha de grupo ficam numa <tr> dentro da
+# tabela "Itens em que o fornecedor é o melhor classificado" (a
+# PRIMEIRA <table> dentro da linha do fornecedor expandido — a
+# segunda table é a de "...não é o melhor classificado", que a gente
+# ignora). Cada <tr> tem um botão com ícone `fa-plus-square`.
 #
-# ITEM VENCIDO POR GRUPO (linha "GRUPO N | X itens"): não dá pra
-# expandir inline, é preciso navegar por uma cadeia de 3 cliques:
-#   1. Na linha do grupo (já expandida, dentro do fornecedor), clicar
-#      no botão com ícone `fa-plus-square` -> navega pra
-#      .../item/<id>?identificador=... (visão geral do grupo, lista
-#      TODOS os fornecedores que disputaram aquele grupo, não só o
-#      nosso alvo).
-#   2. Nessa página, achar a linha do CNPJ do fornecedor alvo e
-#      clicar no botão `button[aria-expanded]` (aria-label="Mostrar
-#      proposta do grupo") -> expande e revela um bloco "PROPOSTA"
-#      terminando num botão/link com texto "Itens do grupo >>"
+# ITEM AVULSO (não-grupo, ex: "40 BLOCO DE CONCRETO"): 2 passos —
+#   1. Clicar no `fa-plus-square` da <tr> -> navega pra
+#      .../item/<numero>?identificador=... (visão geral do ITEM, lista
+#      todos os fornecedores que ofertaram nele).
+#   2. Achar a linha do CNPJ alvo (div.cp-item-expansivel) e clicar no
+#      `button[aria-expanded]` -> expande e revela direto a aba
+#      "PROPOSTA" com Quantidade ofertada, Marca/Fabricante,
+#      Modelo/Versão (SEM "Descrição detalhada" — esse campo só existe
+#      na tela de itens de grupo, ver abaixo).
+#   Ver expandir_item_avulso_e_extrair(). 1x "Voltar" pra retornar.
+#
+# ITEM VENCIDO POR GRUPO (linha "GRUPO N | X itens"): 3 passos —
+#   1. Clicar no `fa-plus-square` da <tr> do grupo -> navega pra
+#      .../item/<id-negativo>?identificador=... (visão geral do GRUPO,
+#      lista todos os fornecedores que disputaram aquele grupo).
+#   2. Achar a linha do CNPJ alvo e clicar no `button[aria-expanded]`
+#      (aria-label="Mostrar proposta do grupo") -> expande e revela um
+#      bloco "PROPOSTA" terminando num botão/link "Itens do grupo >>"
 #      (cuidado: não confundir com o texto explicativo mais longo
 #      "Visualize as propostas dos itens do grupo..." que também
-#      contém a substring "itens do grupo" — procurar especificamente
-#      um elemento <button> ou <a> com esse texto, não texto solto).
-#   3. Clicar nesse "Itens do grupo >>" -> navega pra
+#      contém essa substring — procurar um <button>/<a> especificamente
+#      com esse texto, não texto solto).
+#   3. Clicar em "Itens do grupo >>" -> navega pra
 #      .../item/<id>/itens-grupo/participante/<cnpj-sem-formatacao>,
-#      que lista cada item do grupo (mesma estrutura de card com
-#      chevron de expansão do item avulso) -> usar
-#      expandir_item_individual() em cada um.
+#      que lista cada item do grupo como div.cp-item-expansivel (aqui
+#      SIM, estrutura diferente da <tr> da listagem principal), cada
+#      um com um botão-chevron (`button:has(i.fa-chevron-down)`) que
+#      expande INLINE e revela Descrição detalhada + Quantidade
+#      ofertada + Marca/Fabricante + Modelo/Versão.
+#   Ver expandir_grupo_e_coletar_itens() / expandir_item_individual().
+#   2x "Voltar" pra retornar (participante -> overview -> lista).
 #
-# Depois de coletar, tem que voltar (botão "Voltar" ou re-navegar)
-# antes de continuar pro próximo fornecedor/grupo.
-
-
-_RE_ITEM_MELHOR_CLASSIFICADO = re.compile(
-    r"(\d+)\s+([^\n]+)\n"
-    r"(Homologado|Julgado[^\n]*)\s*"
-    r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)"
-)
-
-
-_RE_LINHA_GRUPO = re.compile(r"^\|\s*(\d+)\s*itens?$", re.IGNORECASE)
-
-
-def _parsear_itens_melhor_classificado(bloco_texto: str) -> list[dict]:
-    """Extrai os itens do bloco de texto entre 'Itens em que o
-    fornecedor é o melhor classificado' e o próximo marcador (fim do
-    fornecedor ou bloco 'não é o melhor classificado').
-
-    Quando o fornecedor venceu um GRUPO inteiro (disputa "menor preço
-    por grupo"), a tela mostra uma linha-resumo ("<grupo> | N itens")
-    em vez de item por item — essas linhas viram entradas com
-    "eh_grupo": True e SEM número de item de verdade (ainda não
-    implementamos a expansão de grupo em itens individuais — ver TODO).
-    Nunca inventamos números de item pra esses casos.
-    """
-    itens = []
-    for m in _RE_ITEM_MELHOR_CLASSIFICADO.finditer(bloco_texto):
-        descricao = _limpar(m.group(2))
-        m_grupo = _RE_LINHA_GRUPO.match(descricao)
-
-        if m_grupo:
-            itens.append({
-                "eh_grupo": True,
-                "grupo": m.group(1),
-                "qtd_itens_grupo": m_grupo.group(1),
-                "status": _limpar(m.group(3)),
-                "valor_estimado": m.group(4),
-                "valor_ofertado": m.group(5),
-            })
-            continue
-
-        itens.append({
-            "eh_grupo": False,
-            "numero_item": m.group(1),
-            "descricao_curta": descricao,
-            "status": _limpar(m.group(3)),
-            "valor_estimado": m.group(4),
-            "valor_ofertado": m.group(5),
-        })
-
-    return itens
+# coletar_fornecedores_itens() já orquestra tudo isso automaticamente.
 
 
 async def _expandir_fornecedor(page, linha_locator) -> bool:
@@ -456,7 +416,7 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
     await link_itens_grupo.click()
     await page.wait_for_timeout(2500)
 
-    cards_item = page.locator("div.cp-item-expansivel")
+    cards_item = page.locator("div.cp-item-expansivel:visible")
     total_cards = await cards_item.count()
 
     itens = []
@@ -482,22 +442,48 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
     return itens
 
 
+async def _voltar(page, vezes: int = 1) -> None:
+    """Clica no botão/link 'Voltar' `vezes` vezes seguidas, esperando
+    a navegação entre cada clique."""
+    for _ in range(vezes):
+        voltar = page.get_by_text("Voltar", exact=True).first
+        if await voltar.count() == 0:
+            log("  ⚠ Botão 'Voltar' não encontrado ao tentar navegar de volta.")
+            return
+        await voltar.click()
+        await page.wait_for_timeout(3000)
+
+
 async def coletar_fornecedores_itens(page) -> list[dict]:
     """Deve ser chamada com `page` já na tela de seleção de
     fornecedores (aba 'Fornecedores' visível — clique nela se
     necessário antes de chamar esta função).
 
-    Expande cada fornecedor com itens habilitados > 0 e retorna uma
-    lista de {"cnpj", "fornecedor", "itens": [...]}, onde cada item
-    tem numero_item/descricao_curta/status/valor_estimado/valor_ofertado
-    (ainda SEM quantidade/marca/modelo — ver TODO no topo do arquivo).
+    Expande cada fornecedor com itens habilitados > 0, entra em CADA
+    item (avulso ou de grupo) via expandir_item_avulso_e_extrair() /
+    expandir_grupo_e_coletar_itens(), e retorna uma lista de
+    {"cnpj", "fornecedor", "itens": [...]} já com os itens totalmente
+    detalhados (número, descrição, quantidade ofertada, marca, modelo,
+    valor unitário — itens de grupo já vêm expandidos em itens
+    individuais, sem entrada "eh_grupo" no resultado final).
+
+    ATENÇÃO: isso navega bastante (entra e sai da tela de cada item),
+    então é lento — para um fornecedor com N itens, são ~N idas e
+    voltas. Ainda não trata paginação dentro da lista "melhor
+    classificado" (fornecedores com muitos itens podem ter mais de
+    uma página ali) — ver nota no topo do arquivo.
     """
     aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
     if await aba_fornecedores.count() > 0:
         await aba_fornecedores.click()
         await page.wait_for_timeout(2000)
 
-    linhas = page.locator("div.cp-item-expansivel")
+    # ":visible" é essencial aqui — a aba "Itens" (não selecionada)
+    # continua no DOM escondida, e também usa a classe
+    # cp-item-expansivel, então sem esse filtro os índices ficam
+    # todos errados (itens ocultos entram na contagem antes dos
+    # fornecedores de verdade).
+    linhas = page.locator("div.cp-item-expansivel:visible")
     total = await linhas.count()
     log(f"Total de fornecedores na listagem: {total}")
 
@@ -514,27 +500,71 @@ async def coletar_fornecedores_itens(page) -> list[dict]:
         m_cnpj = re.search(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", texto_linha_fechada)
         cnpj = m_cnpj.group(0) if m_cnpj else ""
 
+        nome_match = re.search(r"\n([A-ZÀ-Ÿ0-9][^\n]*)\nItens habilitados", texto_linha_fechada)
+        nome = _limpar(nome_match.group(1)) if nome_match else ""
+
         expandiu = await _expandir_fornecedor(page, linha)
         if not expandiu:
             log(f"  ⚠ Não consegui expandir fornecedor {cnpj} — pulando.")
             continue
 
-        texto_expandido = await linha.inner_text()
+        # Localiza a PRIMEIRA tabela dentro da linha do fornecedor — é
+        # sempre a de "...é o melhor classificado" (vem antes da de
+        # "...não é o melhor classificado" na ordem do documento).
+        tabela_melhor = linha.locator("table").first
+        linhas_tabela = tabela_melhor.locator("tbody tr")
+        total_linhas_item = await linhas_tabela.count()
 
-        # Corta só o trecho "melhor classificado" (ignora o bloco "não é o melhor classificado")
-        idx_inicio = texto_expandido.find("melhor classificado")
-        idx_fim = texto_expandido.find("não é o melhor classificado")
-        bloco = texto_expandido[idx_inicio:idx_fim] if idx_fim > 0 else texto_expandido[idx_inicio:]
+        itens_completos = []
 
-        itens = _parsear_itens_melhor_classificado(bloco)
+        for j in range(total_linhas_item):
+            linha_item = linhas_tabela.nth(j)
+            texto_item = await linha_item.inner_text()
 
-        # Nome do fornecedor: primeira linha de texto antes de "Itens habilitados"
-        nome_match = re.search(r"\n([A-ZÀ-Ÿ0-9][^\n]*)\nItens habilitados", texto_linha_fechada)
-        nome = _limpar(nome_match.group(1)) if nome_match else ""
+            # Linha de grupo: "GRUPO 3 | 3 itens..." (começa com a
+            # palavra GRUPO, não com dígito). Checar isso ANTES do
+            # padrão de item avulso, senão nunca bate (não começa com
+            # dígito) e a linha de grupo inteira é silenciosamente
+            # pulada — bug real que já aconteceu aqui.
+            m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
 
-        log(f"  {cnpj} {nome}: {len(itens)} item(ns) melhor classificado (esperado: {m_habilitados.group(1)})")
+            if m_grupo:
+                log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
+                itens_do_grupo = await expandir_grupo_e_coletar_itens(page, linha_item, cnpj)
+                itens_completos.extend(itens_do_grupo)
+                await _voltar(page, 2)
+            else:
+                m_num = re.match(r"(\d+)\s+([^\n]+)", texto_item)
+                if not m_num:
+                    continue
 
-        resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens})
+                # A linha compacta só tem o rótulo "Valor estimado :" seguido
+                # de DOIS números (estimado, depois ofertado, sem rótulo repetido).
+                m_valor = re.search(r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)", texto_item)
+                detalhe = await expandir_item_avulso_e_extrair(page, linha_item, cnpj)
+                itens_completos.append({
+                    "numero_item": m_num.group(1),
+                    "descricao_curta": _limpar(m_num.group(2)),
+                    "valor_unitario_ofertado": m_valor.group(2) if m_valor else "",
+                    **detalhe,
+                })
+                await _voltar(page, 1)
+
+            # Depois de voltar, o "Voltar" costuma cair na aba "Itens"
+            # (estado padrão da URL), não mantém a aba "Fornecedores"
+            # selecionada — precisa clicar nela nome antes de re-expandir.
+            aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
+            await aba_fornecedores.click()
+            await page.wait_for_timeout(2000)
+
+            linha = linhas.nth(i)
+            await _expandir_fornecedor(page, linha)
+            tabela_melhor = linha.locator("table").first
+            linhas_tabela = tabela_melhor.locator("tbody tr")
+
+        log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (esperado: {m_habilitados.group(1)})")
+
+        resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens_completos})
 
     return resultado
 
