@@ -315,8 +315,7 @@ async def _expandir_fornecedor(page, linha_locator) -> bool:
 
 
 _RE_ITEM_EXPANDIDO = re.compile(
-    r"Descrição detalhada\n(?P<descricao_detalhada>[^\n]+)\n"
-    r".*?"
+    r"(?:Descrição detalhada\n(?P<descricao_detalhada>[^\n]+)\n.*?)?"
     r"Quantidade ofertada\n(?P<quantidade_ofertada>[\d.,]+)\n"
     r"Marca/Fabricante\n(?P<marca>[^\n]*)\n"
     r"Modelo/Vers[ãa]o\n(?P<modelo>[^\n]*)",
@@ -325,18 +324,22 @@ _RE_ITEM_EXPANDIDO = re.compile(
 
 
 def _parsear_item_expandido(texto: str) -> dict:
-    """Extrai os dados que só aparecem depois de expandir um item
-    (individual ou dentro de um grupo): descrição detalhada,
-    quantidade ofertada, marca/fabricante, modelo/versão."""
+    """Extrai os dados que só aparecem depois de expandir um item:
+    quantidade ofertada, marca/fabricante, modelo/versão e, quando
+    presente, descrição detalhada (só aparece na tela 'Itens do
+    grupo' — a tela de detalhe de item avulso, .../item/<numero>,
+    não tem esse campo)."""
     m = _RE_ITEM_EXPANDIDO.search(texto)
     if not m:
         return {}
-    return {
-        "descricao_detalhada": _limpar(m.group("descricao_detalhada")),
+    resultado = {
         "quantidade_ofertada": _limpar(m.group("quantidade_ofertada")),
         "marca": _limpar(m.group("marca")),
         "modelo": _limpar(m.group("modelo")),
     }
+    if m.group("descricao_detalhada"):
+        resultado["descricao_detalhada"] = _limpar(m.group("descricao_detalhada"))
+    return resultado
 
 
 async def expandir_item_individual(item_locator, page) -> dict:
@@ -352,6 +355,49 @@ async def expandir_item_individual(item_locator, page) -> dict:
         await page.wait_for_timeout(1200)
 
     texto = await item_locator.inner_text()
+    return _parsear_item_expandido(texto)
+
+
+async def expandir_item_avulso_e_extrair(page, tr_locator, cnpj_fornecedor: str) -> dict:
+    """A partir da linha <tr> de UM item avulso (não-grupo) já visível
+    (dentro do fornecedor expandido, na aba Fornecedores), clica no "+"
+    (navega pra .../item/<numero>, visão geral do item — lista todos os
+    fornecedores que ofertaram nele), acha a linha do fornecedor alvo e
+    expande a proposta. Retorna o detalhe extraído (quantidade ofertada,
+    marca, modelo — sem descrição detalhada, que não existe nessa tela,
+    só na tela 'Itens do grupo').
+
+    Deixa `page` na tela .../item/<numero> — quem chamar essa função é
+    responsável por voltar/renavegar pra continuar coletando os
+    próximos itens/fornecedores depois.
+
+    STATUS: validado de ponta a ponta com dados reais (pregão 44/2026,
+    item 40 BLOCO DE CONCRETO, fornecedor F DE OLIVEIRA -> quantidade
+    ofertada 16, marca PRÉ MOLDADO, modelo C/EDITAL, tudo batendo).
+    """
+    botao_mais = tr_locator.locator("button:has(i.fa-plus-square)").first
+    if await botao_mais.count() == 0:
+        log("  ⚠ Não achei o botão '+' na linha do item.")
+        return {}
+
+    await botao_mais.scroll_into_view_if_needed()
+    await botao_mais.click()
+    await page.wait_for_timeout(2000)
+
+    linha_fornecedor = page.get_by_text(cnpj_fornecedor, exact=False).first
+    if await linha_fornecedor.count() == 0:
+        log(f"  ⚠ Não achei o fornecedor {cnpj_fornecedor} na visão geral do item.")
+        return {}
+
+    linha_fornecedor_container = linha_fornecedor.locator(
+        "xpath=ancestor::div[contains(@class,'cp-item-expansivel')]"
+    ).first
+
+    if not await _expandir_fornecedor(page, linha_fornecedor_container):
+        log(f"  ⚠ Não consegui expandir a proposta do fornecedor {cnpj_fornecedor} no item.")
+        return {}
+
+    texto = await linha_fornecedor_container.inner_text()
     return _parsear_item_expandido(texto)
 
 
