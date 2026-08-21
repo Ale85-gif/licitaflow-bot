@@ -366,17 +366,16 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
     — quem chamar essa função é responsável por voltar/renavegar pra
     continuar coletando os próximos fornecedores/grupos depois.
 
-    STATUS: cada passo da cadeia foi validado individualmente ao vivo
-    (clique no "+", clique em "Mostrar proposta do grupo", clique em
-    "Itens do grupo >>", expansão de item com expandir_item_individual).
-    A função COMBINADA ainda não passou num teste de ponta a ponta sem
-    falhas: numa tentativa, o passo de achar `cnpj_fornecedor` na visão
-    geral do grupo falhou com o pregão na etapa "Fase Recursal" (etapa=FR)
-    — funcionou quando testado manualmente em "Adjudicação/Homologação"
-    (etapa=AH). Pode ser que a tela mostre menos informação/formatação
-    diferente do CNPJ nessa fase, ou pode ter sido só timing. Precisa
-    testar de novo com o pregão numa etapa estável antes de confiar
-    nessa função em produção — não usar sem validar de novo.
+    STATUS: validada de ponta a ponta com dados reais (pregão 44/2026,
+    fornecedor F DE OLIVEIRA, GRUPO 3 -> 3 itens extraídos corretamente
+    com número, descrição, marca, modelo, quantidade ofertada e valor
+    unitário todos batendo com o esperado). Validado com o pregão na
+    etapa "Adjudicação/Homologação" (etapa=AH). Numa tentativa anterior,
+    com o pregão na etapa "Fase Recursal" (etapa=FR), o passo de achar
+    `cnpj_fornecedor` na visão geral do grupo falhou — não se sabe se é
+    porque a tela em FR mostra menos informação, ou só timing. Se for
+    chamar essa função com o pregão numa fase diferente de AH, vale
+    testar de novo antes de confiar no resultado.
     """
     botao_mais = linha_grupo_locator.locator("button:has(i.fa-plus-square)").first
     if await botao_mais.count() == 0:
