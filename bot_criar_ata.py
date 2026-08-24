@@ -1332,20 +1332,57 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
 
             linhas_antes = await tabela.locator("tr").count()
 
-            # arraste com passos intermediários — confirmado necessário
-            # para uma seleção precisa (um "salto" direto de início a
-            # fim, sem passos no meio, produziu seleção imprecisa em
-            # teste real).
-            await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xi, "y": yi, "button": "left", "clickCount": 1})
-            await page.wait_for_timeout(150)
-            passos = 6
-            for k in range(1, passos + 1):
-                xm = xi + (xf - xi) * k / passos
-                ym = yi + (yf - yi) * k / passos
-                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": xm, "y": ym, "buttons": 1})
-                await page.wait_for_timeout(80)
-            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "left", "clickCount": 1})
-            await page.wait_for_timeout(400)
+            # Confere a seleção ANTES de remover — não depois. Uma
+            # remoção com contagem errada já é dano feito (não dá pra
+            # saber com segurança QUAL linha saiu a mais/menos e
+            # desfazer). Em vez disso, valida via getSelection() do
+            # navegador se o arraste selecionou EXATAMENTE as linhas
+            # [inicio, fim] antes de clicar em "Remover Linhas";
+            # re-tenta o arraste (nada foi removido ainda) até acertar
+            # ou esgotar tentativas.
+            selecao_correta = False
+            for tentativa_arraste in range(3):
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xi, "y": yi, "button": "left", "clickCount": 1})
+                await page.wait_for_timeout(150)
+                passos = 6
+                for k in range(1, passos + 1):
+                    xm = xi + (xf - xi) * k / passos
+                    ym = yi + (yf - yi) * k / passos
+                    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": xm, "y": ym, "buttons": 1})
+                    await page.wait_for_timeout(80)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "left", "clickCount": 1})
+                await page.wait_for_timeout(400)
+
+                linhas_selecionadas = await frame_editor.evaluate(
+                    """([tabelaIdx, inicioIdx, fimIdx]) => {
+                        const tabela = document.querySelectorAll('table')[tabelaIdx];
+                        const trs = tabela.querySelectorAll('tr');
+                        const sel = window.getSelection();
+                        const selecionadas = [];
+                        for (let i = 0; i < trs.length; i++) {
+                            if (sel.containsNode(trs[i], true)) selecionadas.push(i);
+                        }
+                        return selecionadas;
+                    }""",
+                    [indice_tabela, inicio, fim],
+                )
+
+                esperado_lista = list(range(inicio, fim + 1))
+                if linhas_selecionadas == esperado_lista:
+                    selecao_correta = True
+                    break
+
+                log(f"    ⚠ Seleção do bloco {inicio}-{fim} da tabela [{indice_tabela}] veio como {linhas_selecionadas} "
+                    f"(tentativa {tentativa_arraste + 1}/3) — tentando o arraste de novo antes de remover qualquer coisa.")
+                await page.mouse.click(50, 50)
+                await page.wait_for_timeout(400)
+
+            if not selecao_correta:
+                raise RuntimeError(
+                    f"Não consegui selecionar exatamente as linhas {inicio}-{fim} da tabela [{indice_tabela}] "
+                    f"após 3 tentativas de arraste. Abortando ANTES de remover nada deste bloco — "
+                    f"nenhum dado foi corrompido, mas revise manualmente este clone."
+                )
 
             await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xf, "y": yf, "button": "right", "clickCount": 1})
             await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "right", "clickCount": 1})
