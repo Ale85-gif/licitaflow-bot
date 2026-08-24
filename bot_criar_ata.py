@@ -940,6 +940,174 @@ async def preencher_fornecedor_cnpj(frame_editor, nome_fornecedor: str, cnpj: st
     log(f"Fornecedor/CNPJ preenchidos no cabeçalho da tabela de itens: {nome_fornecedor} / {cnpj}")
 
 
+# =========================================================
+# TABELA DE ITENS — inserir linhas + preencher
+# =========================================================
+# O clique direito nativo do Playwright (.click(button="right")) NÃO
+# abre o menu de contexto desse editor — confirmado, é preciso simular
+# via CDP puro (Input.dispatchMouseEvent). O menu abre em um frame NOVO
+# (não necessariamente o último de page.frames — frames de menus
+# anteriores que não foram fechados continuam na lista), por isso
+# _achar_item_menu_visivel() procura o texto em TODOS os frames e pega
+# o primeiro visível, em vez de assumir um índice fixo.
+#
+# Cadeia de cliques pra inserir uma linha (validada no clone 298/2026):
+# botão direito numa célula da linha de referência -> menu ("Colar",
+# "Célula", "Linha", "Coluna", "Apagar Tabela", "Formatar Tabela") ->
+# clicar em "Linha" -> submenu ("Inserir linha acima", "Inserir linha
+# abaixo", ...) -> clicar na opção desejada.
+#
+# IMPORTANTE: a linha inserida vem com TODAS as 10 células vazias —
+# diferente da linha original do modelo, que já vem com "12 Meses" no
+# Prazo de validade. Cada linha inserida precisa desse campo preenchido
+# manualmente também (preencher_linha_item cuida disso).
+
+
+async def _achar_item_menu_visivel(page, texto: str, exato: bool = True):
+    """Procura `texto` em TODOS os frames da página (não só o frame do
+    editor) e retorna o primeiro elemento visível encontrado, ou None.
+    Necessário porque os menus de contexto desse editor abrem em frames
+    dinâmicos que não têm índice/nome previsível."""
+    for fr in page.frames:
+        try:
+            candidatos = fr.get_by_text(texto, exact=exato)
+            n = await candidatos.count()
+            for i in range(n):
+                el = candidatos.nth(i)
+                if await el.is_visible():
+                    return el
+        except Exception:
+            continue
+    return None
+
+
+async def inserir_linha_tabela(page, celula_referencia, abaixo: bool = True) -> None:
+    """Clica com botão direito (via CDP) na `celula_referencia` de uma
+    linha da tabela de itens e insere uma nova linha acima ou abaixo
+    dela, usando o menu de contexto do editor (Linha > Inserir linha
+    acima/abaixo)."""
+    box = await celula_referencia.bounding_box()
+    if box is None:
+        raise RuntimeError("Não consegui obter a posição da célula de referência para o clique direito.")
+
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+
+    cdp = await page.context.new_cdp_session(page)
+    await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "right", "clickCount": 1})
+    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "right", "clickCount": 1})
+    await page.wait_for_timeout(1200)
+
+    item_linha = await _achar_item_menu_visivel(page, "Linha")
+    if item_linha is None:
+        raise RuntimeError("Cliquei com botão direito na célula, mas não achei o item 'Linha' do menu de contexto.")
+    await item_linha.click()
+    await page.wait_for_timeout(1000)
+
+    texto_opcao = "Inserir linha abaixo" if abaixo else "Inserir linha acima"
+    item_opcao = await _achar_item_menu_visivel(page, texto_opcao, exato=False)
+    if item_opcao is None:
+        raise RuntimeError(f"Abri o submenu 'Linha' mas não achei a opção {texto_opcao!r}.")
+    await item_opcao.click()
+    await page.wait_for_timeout(1500)
+
+
+async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
+    """Preenche as 10 células de UMA linha de dado da tabela de itens
+    (já localizada em `linha_tr`, um <tr>) com os campos de `item`:
+    grupo_tr, item_tr, especificacao, marca, modelo, unidade,
+    quantidade_maxima, quantidade_minima, valor_unitario e (opcional)
+    prazo_validade (default "12 Meses" — a linha original do modelo já
+    vem com isso preenchido, mas linhas inseridas via
+    inserir_linha_tabela() vêm totalmente vazias).
+
+    Nunca inventa dado: se uma chave obrigatória faltar em `item`,
+    levanta erro em vez de deixar a célula em branco silenciosamente
+    (regra do projeto — quem montar `item` é responsável por garantir
+    que os dados vieram de fonte confiável antes de chamar isso)."""
+    campos_obrigatorios = [
+        "grupo_tr", "item_tr", "especificacao", "marca", "modelo",
+        "unidade", "quantidade_maxima", "quantidade_minima", "valor_unitario",
+    ]
+    faltando = [c for c in campos_obrigatorios if not item.get(c)]
+    if faltando:
+        raise ValueError(f"Campo(s) obrigatório(s) faltando para preencher a linha do item: {faltando}")
+
+    valores_por_indice = [
+        item["grupo_tr"],
+        item["item_tr"],
+        item["especificacao"],
+        item["marca"],
+        item["modelo"],
+        item["unidade"],
+        item["quantidade_maxima"],
+        item["quantidade_minima"],
+        item["valor_unitario"],
+        item.get("prazo_validade", "12 Meses"),
+    ]
+
+    celulas = linha_tr.locator("td, th")
+    for indice, valor in enumerate(valores_por_indice):
+        celula = celulas.nth(indice)
+        texto_atual = (await celula.inner_text()).strip()
+        if texto_atual:
+            # célula já tem conteúdo (ex: "12 Meses" da linha original) —
+            # não duplica, só sobrescreve se o valor pedido for diferente.
+            if texto_atual == str(valor):
+                continue
+            # Seleciona só o texto DENTRO da célula (Home + Shift+End),
+            # não Ctrl+A — isso evitar risco de selecionar além da
+            # célula (linha inteira/tabela/documento) e apagar algo que
+            # não devia.
+            await celula.click()
+            await frame_editor.locator("body").press("Home")
+            await frame_editor.locator("body").press("Shift+End")
+        else:
+            await celula.click()
+        await frame_editor.locator("body").type(str(valor))
+        await frame_editor.wait_for_timeout(150)
+
+
+async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
+    """Preenche a tabela de 'DOS PREÇOS, ESPECIFICAÇÕES E QUANTITATIVOS'
+    com a lista completa de itens de UM fornecedor (a mesma tabela já
+    deve ter Fornecedor/CNPJ preenchidos via preencher_fornecedor_cnpj).
+
+    Cada item de `itens` deve ter as chaves exigidas por
+    preencher_linha_item (grupo_tr, item_tr, especificacao, marca,
+    modelo, unidade, quantidade_maxima, quantidade_minima,
+    valor_unitario, prazo_validade opcional). O primeiro item usa a
+    linha de dado que já existe no modelo (tr[2]); para cada item
+    adicional, insere uma linha nova abaixo da última preenchida antes
+    de preencher.
+
+    Se `itens` estiver vazio, levanta erro — nunca deixa uma ata sem
+    nenhum item (isso indicaria um bug no chamador, não um caso válido)."""
+    if not itens:
+        raise ValueError("Lista de itens vazia — não é um cenário válido para preencher a tabela de uma ata.")
+
+    tabela = frame_editor.locator("table").first
+    linha_atual = tabela.locator("tr").nth(2)
+
+    await preencher_linha_item(frame_editor, linha_atual, itens[0])
+    log(f"  Item 1/{len(itens)} preenchido (item TR {itens[0].get('item_tr')}).")
+
+    for i, item in enumerate(itens[1:], start=2):
+        primeira_celula = linha_atual.locator("td, th").nth(0)
+        await inserir_linha_tabela(page, primeira_celula, abaixo=True)
+
+        # a linha recem-inserida e sempre a proxima apos a ultima
+        # preenchida — reconta pra pegar o indice certo (a tabela pode
+        # ter crescido).
+        total_linhas = await tabela.locator("tr").count()
+        linha_atual = tabela.locator("tr").nth(total_linhas - 1)
+
+        await preencher_linha_item(frame_editor, linha_atual, item)
+        log(f"  Item {i}/{len(itens)} preenchido (item TR {item.get('item_tr')}).")
+
+    log(f"Tabela de itens preenchida: {len(itens)} item(ns) no total.")
+
+
 async def main():
     try:
         abrir_chrome()
