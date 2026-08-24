@@ -635,6 +635,23 @@ async def coletar_fornecedores_itens(page, arquivo_progresso: str | None = None)
                 # dígito) e a linha de grupo inteira é silenciosamente
                 # pulada — bug real que já aconteceu aqui.
                 m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
+                m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
+
+                # Nenhum dos dois padrões bateu — pode ser a linha ainda
+                # carregando (texto vazio/parcial) logo após trocar de
+                # página/reabrir o fornecedor. Espera ativa e tenta de
+                # novo antes de desistir; SEMPRE loga se perder a linha,
+                # nunca pular um item em silêncio (já aconteceu: um
+                # GRUPO inteiro sumiu sem nenhum log quando isso não
+                # existia aqui).
+                if not m_grupo and not m_num:
+                    for _ in range(15):
+                        await page.wait_for_timeout(300)
+                        texto_item = await linha_item.inner_text()
+                        m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
+                        m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
+                        if m_grupo or m_num:
+                            break
 
                 if m_grupo:
                     log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
@@ -642,8 +659,8 @@ async def coletar_fornecedores_itens(page, arquivo_progresso: str | None = None)
                     itens_completos.extend(itens_do_grupo)
                     await _voltar(page, 2)
                 else:
-                    m_num = re.match(r"(\d+)\s+([^\n]+)", texto_item)
                     if not m_num:
+                        log(f"  ⚠ Linha {j} do fornecedor {cnpj} não bateu em nenhum padrão (grupo/item) mesmo após esperar — PULADA. Texto: {texto_item[:100]!r}")
                         continue
 
                     # A linha compacta só tem o rótulo "Valor estimado :" seguido
