@@ -790,6 +790,19 @@ async def clonar_ata_modelo(page) -> str:
     """
     identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
 
+    # A listagem tem um campo de busca por texto que filtra os
+    # resultados — se ficar algum texto digitado nele (de uma
+    # exploração/teste anterior na mesma sessão do navegador, por
+    # exemplo), o artefato modelo pode não bater no filtro e sumir da
+    # lista mesmo existindo. Sempre limpa antes de procurar.
+    campo_busca = page.locator("input[placeholder*='Pesquise']").first
+    if await campo_busca.count() > 0:
+        valor_atual = await campo_busca.input_value()
+        if valor_atual:
+            await campo_busca.fill("")
+            await campo_busca.press("Enter")
+            await page.wait_for_timeout(1500)
+
     # A listagem é paginada e a ordenação não é óbvia (não é puramente
     # cronológica nem numérica) — confirmado em teste real que, depois
     # de navegar entre páginas em interações anteriores, o artefato
