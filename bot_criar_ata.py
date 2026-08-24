@@ -81,6 +81,10 @@ from comum import (
 
 URL_AREA_TRABALHO = "https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-area-trabalho-web/seguro/governo/area-trabalho"
 
+# Ata MODELO (nunca editar diretamente — só clonar a partir dela).
+ARTEFATO_MODELO_NUMERO = "279"
+ARTEFATO_MODELO_ANO = "2026"
+
 
 # =========================================================
 # TERMO DE REFERÊNCIA (PDF) - Especificação + Unidade por item
@@ -754,12 +758,65 @@ def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05
 
 
 # =========================================================
-# CRIAÇÃO DA ATA (clonar + preencher) - AINDA NÃO IMPLEMENTADO
+# CRIAÇÃO DA ATA (clonar + preencher)
 # =========================================================
 # Ver notas técnicas no topo do arquivo: mecânica de clique em
 # célula e inserção/remoção de linha já validada manualmente, mas
-# ainda não encapsulada em funções reutilizáveis. Próximo passo,
-# depois de fechar a coleta de dados.
+# ainda não encapsulada em funções reutilizáveis (preenchimento da
+# tabela em si vem depois de clonar_ata_modelo()).
+#
+# Tela: .../comprasnet-artefatos-web/leitor-artefato (listagem de
+# Artefatos Digitais). Cada artefato é uma linha com 4 ícones de ação:
+# fa-pencil-square-o (Editar — NUNCA usar no modelo 279), fa-copy
+# (Clonar — "Criar um novo artefato do tipo ARP ... a partir deste"),
+# fa-eye (Visualizar) e fa-ellipsis-v (mais opções). Confirmado
+# clicando manualmente: "Clonar" já abre automaticamente o editor do
+# clone recém-criado (.../artefatos/edit/<id>?artefato=<novo>/<ano>&tipo=ARP),
+# não precisa de nenhuma navegação extra depois do clique.
+
+
+async def clonar_ata_modelo(page) -> str:
+    """Clica em 'Clonar' (ícone fa-copy) na linha do artefato MODELO
+    (ARTEFATO_MODELO_NUMERO/ARTEFATO_MODELO_ANO, isto é, a Ata 279) na
+    tela de listagem de Artefatos Digitais. NUNCA clica em Editar nessa
+    linha — só em Clonar, pra nunca alterar o modelo original.
+
+    Deve ser chamada com `page` já na tela de listagem
+    (.../comprasnet-artefatos-web/leitor-artefato).
+
+    Retorna o identificador do clone recém-criado (ex: "295/2026"),
+    extraído da URL depois que o sistema navega automaticamente pro
+    editor dele.
+    """
+    identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
+    linha_num = page.get_by_text(identificador_modelo, exact=True).first
+    if await linha_num.count() == 0:
+        raise RuntimeError(
+            f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais."
+        )
+
+    linha_container = linha_num.locator("xpath=ancestor::tr[1]")
+    botao_clonar = linha_container.locator("button:has(i.fa-copy)").first
+    if await botao_clonar.count() == 0:
+        raise RuntimeError("Não achei o botão 'Clonar' (ícone fa-copy) na linha do artefato modelo.")
+
+    await botao_clonar.scroll_into_view_if_needed()
+    await botao_clonar.click()
+
+    try:
+        await page.wait_for_url(re.compile(r"/artefatos/edit/\d+\?artefato="), timeout=15000)
+    except Exception:
+        raise RuntimeError(
+            f"Cliquei em 'Clonar' mas a navegação para o editor do clone não aconteceu a tempo (url atual: {page.url})."
+        )
+
+    m = re.search(r"artefato=(\d+)(?:%2F|/)(\d+)", page.url)
+    if not m:
+        raise RuntimeError(f"Clone criado, mas não consegui extrair o identificador da URL: {page.url}")
+
+    identificador_clone = f"{m.group(1)}/{m.group(2)}"
+    log(f"Ata modelo clonada com sucesso: {identificador_clone}")
+    return identificador_clone
 
 
 async def main():
