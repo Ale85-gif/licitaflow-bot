@@ -790,7 +790,12 @@ async def clonar_ata_modelo(page) -> str:
     """
     identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
     linha_num = page.get_by_text(identificador_modelo, exact=True).first
-    if await linha_num.count() == 0:
+    # Espera ativa — mesma classe de bug de timing confirmada no resto
+    # do arquivo (ver expandir_item_avulso_e_extrair). A listagem ainda
+    # pode estar carregando logo após navegar/voltar pra essa tela.
+    try:
+        await linha_num.wait_for(state="visible", timeout=8000)
+    except Exception:
         raise RuntimeError(
             f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais."
         )
@@ -802,6 +807,22 @@ async def clonar_ata_modelo(page) -> str:
 
     await botao_clonar.scroll_into_view_if_needed()
     await botao_clonar.click()
+
+    # O clique abre um modal de confirmação ("Deseja copiar o ARP...
+    # 279/2026?" com botões Cancelar/Copiar) — confirmado só ao testar
+    # de verdade, não documentado antes. É um modal Bootstrap
+    # (<modal-container class="modal fade show">), não PrimeNG — o
+    # seletor errado (p-dialog) já causou um bug real aqui: o "achou
+    # modal?" checava p-dialog, nunca achava, então o modal ficava
+    # aberto bloqueando cliques seguintes ("intercepts pointer events").
+    modal = page.locator("modal-container, .modal.show").filter(has_text="Deseja copiar").first
+    try:
+        await modal.wait_for(state="visible", timeout=8000)
+    except Exception:
+        raise RuntimeError("Cliquei em 'Clonar' mas o modal de confirmação ('Deseja copiar...') não apareceu.")
+
+    botao_copiar = modal.get_by_text("Copiar", exact=True).first
+    await botao_copiar.click()
 
     try:
         await page.wait_for_url(re.compile(r"/artefatos/edit/\d+\?artefato="), timeout=15000)
