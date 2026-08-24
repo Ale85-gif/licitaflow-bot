@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import re
 import sys
 import traceback
@@ -549,10 +550,17 @@ async def _ir_para_proxima_pagina(page, linha_fornecedor_locator) -> None:
     await page.wait_for_timeout(1500)
 
 
-async def coletar_fornecedores_itens(page) -> list[dict]:
+async def coletar_fornecedores_itens(page, arquivo_progresso: str | None = None) -> list[dict]:
     """Deve ser chamada com `page` já na tela de seleção de
     fornecedores (aba 'Fornecedores' visível — clique nela se
     necessário antes de chamar esta função).
+
+    Se `arquivo_progresso` for informado, salva o resultado parcial
+    (JSON) em disco depois de CADA fornecedor processado — uma
+    varredura completa do pregão pode levar dezenas de minutos, e a
+    sessão do Chrome já se mostrou instável nesse projeto (login caiu,
+    conexão CDP travou), então não vale a pena arriscar perder tudo por
+    causa de uma falha no meio do caminho.
 
     Expande cada fornecedor com itens habilitados > 0, entra em CADA
     item (avulso ou de grupo) via expandir_item_avulso_e_extrair() /
@@ -682,6 +690,11 @@ async def coletar_fornecedores_itens(page) -> list[dict]:
         log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (linhas habilitadas no card: {m_habilitados.group(1)} de {m_habilitados.group(2)})")
 
         resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens_completos})
+
+        if arquivo_progresso:
+            Path(arquivo_progresso).write_text(
+                json.dumps(resultado, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
     return resultado
 
