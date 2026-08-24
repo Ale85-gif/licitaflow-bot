@@ -790,43 +790,34 @@ async def clonar_ata_modelo(page) -> str:
     """
     identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
 
-    # A listagem tem um campo de busca por texto que filtra os
-    # resultados — se ficar algum texto digitado nele (de uma
-    # exploração/teste anterior na mesma sessão do navegador, por
-    # exemplo), o artefato modelo pode não bater no filtro e sumir da
-    # lista mesmo existindo. Sempre limpa antes de procurar.
+    # A listagem é paginada, com ordenação que não é puramente
+    # cronológica nem numérica — confirmado em teste real que o
+    # artefato modelo podia sumir da página 1 conforme mais clones iam
+    # sendo criados (a listagem inteira cresce e reordena). Navegar
+    # pela paginação se mostrou pouco confiável; o campo de busca por
+    # texto é a forma robusta de achar — buscar só pelo NÚMERO (sem
+    # "/ano") filtra exatamente pro artefato modelo, confirmado em
+    # teste real (buscar "279/2026" com a barra não filtrava; "279"
+    # sozinho filtrava certo).
     campo_busca = page.locator("input[placeholder*='Pesquise']").first
-    if await campo_busca.count() > 0:
-        valor_atual = await campo_busca.input_value()
-        if valor_atual:
-            await campo_busca.fill("")
-            await campo_busca.press("Enter")
-            await page.wait_for_timeout(1500)
+    if await campo_busca.count() == 0:
+        raise RuntimeError("Não achei o campo de busca da listagem de Artefatos Digitais.")
 
-    # A listagem é paginada e a ordenação não é óbvia (não é puramente
-    # cronológica nem numérica) — confirmado em teste real que, depois
-    # de navegar entre páginas em interações anteriores, o artefato
-    # modelo podia ficar "escondido" numa página diferente da 1ª. Reset
-    # pra primeira página sempre, antes de procurar.
-    botao_primeira_pagina = page.locator(".p-paginator-first").first
-    if await botao_primeira_pagina.count() > 0:
-        # fica desabilitado quando já se está na 1ª página — clicar
-        # nesse estado trava esperando "enabled" até dar timeout.
-        desabilitado = await botao_primeira_pagina.get_attribute("disabled")
-        if desabilitado is None:
-            await botao_primeira_pagina.click()
-            await page.wait_for_timeout(1200)
+    await campo_busca.click()
+    await campo_busca.fill(ARTEFATO_MODELO_NUMERO)
+    await campo_busca.press("Enter")
+    await page.wait_for_timeout(2500)
 
     linha_num = page.get_by_text(identificador_modelo, exact=True).first
     # Espera ativa — mesma classe de bug de timing confirmada no resto
-    # do arquivo (ver expandir_item_avulso_e_extrair). A listagem ainda
-    # pode estar carregando logo após navegar/voltar pra essa tela.
+    # do arquivo (ver expandir_item_avulso_e_extrair). A busca pode
+    # levar um instante a mais pra atualizar a lista.
     try:
-        await linha_num.wait_for(state="visible", timeout=8000)
+        await linha_num.wait_for(state="visible", timeout=10000)
     except Exception:
         raise RuntimeError(
             f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais "
-            f"(mesmo após resetar para a primeira página)."
+            f"mesmo após buscar por {ARTEFATO_MODELO_NUMERO!r}."
         )
 
     linha_container = linha_num.locator("xpath=ancestor::tr[1]")
