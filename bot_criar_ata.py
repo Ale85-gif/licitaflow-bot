@@ -806,14 +806,16 @@ async def clonar_ata_modelo(page) -> str:
     await campo_busca.click()
     await campo_busca.fill(ARTEFATO_MODELO_NUMERO)
     await campo_busca.press("Enter")
-    await page.wait_for_timeout(2500)
+    await page.wait_for_timeout(4000)
 
     linha_num = page.get_by_text(identificador_modelo, exact=True).first
     # Espera ativa — mesma classe de bug de timing confirmada no resto
-    # do arquivo (ver expandir_item_avulso_e_extrair). A busca pode
-    # levar um instante a mais pra atualizar a lista.
+    # do arquivo (ver expandir_item_avulso_e_extrair). Confirmado que a
+    # resposta dessa busca pode ser bem mais lenta que o resto do
+    # sistema (>10s às vezes) — timeout generoso, isso só roda 1x por
+    # clone criado.
     try:
-        await linha_num.wait_for(state="visible", timeout=10000)
+        await linha_num.wait_for(state="visible", timeout=20000)
     except Exception:
         raise RuntimeError(
             f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais "
