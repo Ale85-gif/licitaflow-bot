@@ -1108,6 +1108,269 @@ async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
     log(f"Tabela de itens preenchida: {len(itens)} item(ns) no total.")
 
 
+# =========================================================
+# TABELAS DE QUANTIDADES UGG/UGP (seção "ÓRGÃO(S) GERENCIADOR E
+# PARTICIPANTE(S)") — ler coluna A + remover itens de outros fornecedores
+# =========================================================
+# A seção tem 4 tabelas (validado no clone 299/2026, pregão 44/2026):
+#   [0] "QUANTIDADES TOTAIS DAS UGG E UGPs"
+#   [1] "QUANTIDADES MÍNIMAS POR REQUISIÇÕES..."
+#   [2] "QUANTIDADES MÁXIMAS POR REQUISIÇÕES..."
+#   [3] Legenda letra->UGG/UGP (A = a própria UASG do pregão, sempre a
+#       primeira/UGG — confirmado A = 160082 = UASG do pregão 44/2026)
+# As tabelas [0][1][2] têm as mesmas linhas de dado (GRUPO, ITEM,
+# UNIDADE DE MEDIDA, colunas A-G, [TOTAL só na 0]) — já vêm com TODOS
+# os grupos/itens do pregão inteiro, não só os do fornecedor alvo.
+#
+# Coluna GRUPO usa rowspan (só a primeira linha de cada grupo tem
+# célula própria; as seguintes do mesmo grupo têm 1 célula a menos).
+# Itens avulsos (fora de grupo) mostram "-" na coluna GRUPO.
+#
+# Confirmado pelo usuário: "Quantidade Mínima"/"Quantidade Máxima" da
+# tabela de preços vêm da COLUNA A das tabelas [1]/[2] respectivamente
+# (não de nenhum dado coletado do sistema de seleção de fornecedores).
+# Depois de preencher a tabela de preços, as linhas das tabelas
+# [0][1][2] cujo item não pertence ao fornecedor alvo devem ser
+# REMOVIDAS (mantendo intactas as colunas A-G e a estrutura da tabela —
+# confirmado que o editor reajusta o rowspan da coluna GRUPO sozinho ao
+# remover uma linha do meio de um grupo).
+
+
+async def extrair_tabela_quantidades(frame_editor, indice_tabela: int) -> dict:
+    """Lê a tabela de quantidades (índice 0=Totais, 1=Mínimas,
+    2=Máximas) da seção UGG/UGP e retorna
+    {numero_item: {"grupo": str, "unidade": str, "col_a": str}}.
+
+    Trata o rowspan da coluna GRUPO: uma linha sem célula própria de
+    grupo (9 células em vez de 10, ou 10 em vez de 11 na tabela de
+    Totais) herda o grupo da última linha que teve célula própria."""
+    tabela = frame_editor.locator("table").nth(indice_tabela)
+    linhas = tabela.locator("tr")
+    total_linhas = await linhas.count()
+
+    # A tabela de Totais (índice 0) tem 1 coluna a mais (TOTAL no fim)
+    # que as outras duas — o número de células que indica "tem célula
+    # própria de grupo" muda conforme a tabela. Confirmado em teste
+    # real: usar o mesmo critério (10,11) pras 3 tabelas quebrava
+    # silenciosamente a leitura da tabela de Totais, porque nela 10
+    # células significa SEM grupo próprio (o inverso das outras duas).
+    nc_com_grupo, nc_sem_grupo = (11, 10) if indice_tabela == 0 else (10, 9)
+
+    resultado = {}
+    grupo_atual = None
+
+    for r in range(2, total_linhas):  # pula as 2 linhas de título
+        linha = linhas.nth(r)
+        celulas = linha.locator("td, th")
+        nc = await celulas.count()
+
+        if nc == nc_com_grupo:
+            grupo_atual = (await celulas.nth(0).inner_text()).strip()
+            item = (await celulas.nth(1).inner_text()).strip()
+            unidade = (await celulas.nth(2).inner_text()).strip()
+            col_a = (await celulas.nth(3).inner_text()).strip()
+        elif nc == nc_sem_grupo:
+            item = (await celulas.nth(0).inner_text()).strip()
+            unidade = (await celulas.nth(1).inner_text()).strip()
+            col_a = (await celulas.nth(2).inner_text()).strip()
+        else:
+            raise RuntimeError(
+                f"Linha {r} da tabela [{indice_tabela}] tem {nc} célula(s), formato inesperado "
+                f"(esperado {nc_com_grupo} ou {nc_sem_grupo}) — abortando em vez de adivinhar a estrutura."
+            )
+
+        if not item or not item.isdigit():
+            continue
+
+        resultado[item] = {"grupo": grupo_atual, "unidade": unidade, "col_a": col_a}
+
+    return resultado
+
+
+def _agrupar_indices_contiguos(indices: list[int]) -> list[tuple]:
+    """[8,9,10,11,15,16,20] -> [(8,11),(15,16),(20,20)]. Usado para
+    remover blocos de linhas contíguas de uma vez (seleção por arraste
+    + 'Remover Linhas'), em vez de uma linha por vez — necessário por
+    performance: uma tabela de ~85 linhas de item, para um fornecedor
+    com poucos itens, teria ~80 remoções individuais por tabela; feito
+    linha a linha isso levaria minutos por fornecedor, multiplicado por
+    dezenas de fornecedores é inviável."""
+    if not indices:
+        return []
+    blocos = []
+    inicio = fim = indices[0]
+    for idx in indices[1:]:
+        if idx == fim + 1:
+            fim = idx
+        else:
+            blocos.append((inicio, fim))
+            inicio = fim = idx
+    blocos.append((inicio, fim))
+    return blocos
+
+
+async def _celula_item_da_linha(linha_tr, indice_tabela: int):
+    """Retorna o locator da célula 'ITEM' de uma linha de dado das
+    tabelas de quantidade UGG/UGP. Essa célula NUNCA tem rowspan
+    (diferente da célula de GRUPO, que pode cobrir várias linhas) —
+    importante porque a bounding_box de uma célula com rowspan grande
+    cobre TODAS as linhas que ela abrange, e calcular o centro dela
+    para posicionar um clique pode cair numa linha errada (bug real
+    confirmado em teste: um arraste pretendendo cobrir 4 linhas
+    removeu 5, porque o ponto de início foi calculado a partir do
+    centro vertical de uma célula de GRUPO com rowspan=5).
+
+    `indice_tabela` importa: a tabela de Totais (0) tem 1 coluna a mais
+    (TOTAL) que Mínimas/Máximas (1/2), então a contagem de células que
+    indica "linha tem célula própria de grupo" é diferente entre elas
+    (bug real confirmado: usar o mesmo critério pras 3 tabelas fazia a
+    remoção pegar a célula errada só na tabela de Totais)."""
+    nc_com_grupo = 11 if indice_tabela == 0 else 10
+    celulas = linha_tr.locator("td, th")
+    nc = await celulas.count()
+    return celulas.nth(1 if nc == nc_com_grupo else 0)
+
+
+async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fornecedor: set) -> None:
+    """Nas 3 tabelas de quantidades (Totais/Mínimas/Máximas, índices
+    0/1/2) da seção UGG/UGP, remove todas as linhas cujo número de item
+    NÃO esteja em `numeros_item_fornecedor`. Preserva a estrutura
+    (colunas A-G, rowspan de GRUPO ajustado automaticamente pelo
+    editor) — só remove linha inteira via 'Remover Linhas' do menu de
+    contexto, nunca edita célula a célula aqui.
+
+    Agrupa linhas consecutivas a remover em blocos (seleciona por
+    arraste + remove o bloco inteiro de uma vez) por performance. Cada
+    bloco é removido de baixo pra cima (último bloco primeiro), porque
+    remover linhas desloca os índices das linhas abaixo delas."""
+    for indice_tabela in range(3):
+        tabela = frame_editor.locator("table").nth(indice_tabela)
+
+        # 1ª passada (leitura, de cima pra baixo): monta a lista de
+        # índices de linha a remover.
+        linhas = tabela.locator("tr")
+        total_linhas = await linhas.count()
+        indices_para_remover = []
+
+        for r in range(2, total_linhas):
+            linha = linhas.nth(r)
+            celula_item = await _celula_item_da_linha(linha, indice_tabela)
+            item = (await celula_item.inner_text()).strip()
+
+            if item.isdigit() and item not in numeros_item_fornecedor:
+                indices_para_remover.append(r)
+
+        blocos_brutos = _agrupar_indices_contiguos(indices_para_remover)
+
+        # Blocos grandes demais aumentam a distância entre o ponto de
+        # início e fim do arraste, o que na prática se mostrou menos
+        # preciso (a célula de início pode sair da viewport enquanto só
+        # a de fim é usada pra decidir o scroll). Quebra em pedaços de
+        # no máximo MAX_LINHAS_POR_BLOCO pra manter o arraste curto e
+        # as duas pontas sempre visíveis ao mesmo tempo.
+        MAX_LINHAS_POR_BLOCO = 4
+        blocos = []
+        for inicio, fim in blocos_brutos:
+            cursor = inicio
+            while cursor <= fim:
+                fim_pedaco = min(cursor + MAX_LINHAS_POR_BLOCO - 1, fim)
+                blocos.append((cursor, fim_pedaco))
+                cursor = fim_pedaco + 1
+
+        log(f"  Tabela [{indice_tabela}]: removendo {len(indices_para_remover)} de {total_linhas - 2} linha(s) de item, em {len(blocos)} bloco(s).")
+
+        # 2ª passada (remoção, de baixo pra cima — último bloco primeiro).
+        cdp = await page.context.new_cdp_session(page)
+        for inicio, fim in reversed(blocos):
+            linha_inicio = tabela.locator("tr").nth(inicio)
+            linha_fim = tabela.locator("tr").nth(fim)
+            linha_meio = tabela.locator("tr").nth((inicio + fim) // 2)
+
+            cel_inicio = await _celula_item_da_linha(linha_inicio, indice_tabela)
+            cel_fim = await _celula_item_da_linha(linha_fim, indice_tabela)
+            cel_meio = await _celula_item_da_linha(linha_meio, indice_tabela)
+
+            # rola pelo meio do bloco (não pela ponta) — com o bloco
+            # limitado a poucas linhas, isso garante início e fim
+            # visíveis ao mesmo tempo, sem a página rolar de novo entre
+            # calcular uma bounding box e a outra.
+            await cel_meio.scroll_into_view_if_needed()
+            await page.wait_for_timeout(300)
+
+            box_i = await cel_inicio.bounding_box()
+            box_f = await cel_fim.bounding_box()
+            if box_i is None or box_f is None:
+                raise RuntimeError(
+                    f"Não consegui posicionar o bloco {inicio}-{fim} da tabela [{indice_tabela}] "
+                    f"para remover. Abortando — revise manualmente este clone antes de continuar."
+                )
+
+            xi, yi = box_i["x"] + box_i["width"] / 2, box_i["y"] + box_i["height"] / 2
+            xf, yf = box_f["x"] + box_f["width"] / 2, box_f["y"] + box_f["height"] / 2
+
+            linhas_antes = await tabela.locator("tr").count()
+
+            # arraste com passos intermediários — confirmado necessário
+            # para uma seleção precisa (um "salto" direto de início a
+            # fim, sem passos no meio, produziu seleção imprecisa em
+            # teste real).
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xi, "y": yi, "button": "left", "clickCount": 1})
+            await page.wait_for_timeout(150)
+            passos = 6
+            for k in range(1, passos + 1):
+                xm = xi + (xf - xi) * k / passos
+                ym = yi + (yf - yi) * k / passos
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": xm, "y": ym, "buttons": 1})
+                await page.wait_for_timeout(80)
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "left", "clickCount": 1})
+            await page.wait_for_timeout(400)
+
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xf, "y": yf, "button": "right", "clickCount": 1})
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "right", "clickCount": 1})
+            await page.wait_for_timeout(1000)
+
+            item_linha = await _achar_item_menu_visivel(page, "Linha")
+            if item_linha is None:
+                raise RuntimeError(
+                    f"Não achei o menu 'Linha' pro bloco {inicio}-{fim} da tabela [{indice_tabela}]. "
+                    f"Abortando — nenhuma linha foi removida neste bloco, mas revise manualmente "
+                    f"este clone antes de continuar (a seleção pode ter ficado num estado inesperado)."
+                )
+            await item_linha.click()
+            await page.wait_for_timeout(800)
+
+            item_remover = await _achar_item_menu_visivel(page, "Remover Linhas", exato=False)
+            if item_remover is None:
+                raise RuntimeError(
+                    f"Não achei 'Remover Linhas' pro bloco {inicio}-{fim} da tabela [{indice_tabela}]. "
+                    f"Abortando — revise manualmente este clone antes de continuar."
+                )
+            await item_remover.click()
+            await page.wait_for_timeout(1000)
+
+            # Verificação crítica: a contagem de linhas removidas TEM
+            # que bater exatamente com o tamanho do bloco pretendido.
+            # Confirmado em teste real que a seleção por arraste pode
+            # ocasionalmente pegar 1 linha a mais/menos, o que — sem
+            # essa checagem — removeria silenciosamente um item ERRADO
+            # (de outro fornecedor que deveria ficar, ou deixaria um
+            # item que deveria sair) sem nenhum aviso. Preferível parar
+            # tudo e avisar a continuar corrompendo o documento.
+            linhas_depois = await tabela.locator("tr").count()
+            esperado = fim - inicio + 1
+            removido_de_fato = linhas_antes - linhas_depois
+            if removido_de_fato != esperado:
+                raise RuntimeError(
+                    f"Remoção do bloco {inicio}-{fim} da tabela [{indice_tabela}] removeu "
+                    f"{removido_de_fato} linha(s), mas o esperado era {esperado}. "
+                    f"A seleção por arraste ficou imprecisa — abortando para não corromper mais "
+                    f"dados. Revise manualmente este clone (identificador da ata) antes de "
+                    f"continuar; não confie no restante das tabelas UGG/UGP sem checar."
+                )
+
+    log("Remoção de itens não pertencentes ao fornecedor concluída nas 3 tabelas UGG/UGP.")
+
+
 async def main():
     try:
         abrir_chrome()
