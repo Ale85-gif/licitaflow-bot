@@ -609,104 +609,28 @@ async def coletar_fornecedores_itens(page, arquivo_progresso: str | None = None)
         nome_match = re.search(r"\n([A-ZÀ-Ÿ0-9][^\n]*)\nItens habilitados", texto_linha_fechada)
         nome = _limpar(nome_match.group(1)) if nome_match else ""
 
-        expandiu = await _expandir_fornecedor(page, linha)
-        if not expandiu:
-            log(f"  ⚠ Não consegui expandir fornecedor {cnpj} — pulando.")
-            continue
-
-        itens_completos = []
-        pagina_atual = 1
-
-        while True:
-            # Localiza a PRIMEIRA tabela dentro da linha do fornecedor — é
-            # sempre a de "...é o melhor classificado" (vem antes da de
-            # "...não é o melhor classificado" na ordem do documento).
-            tabela_melhor = linha.locator("table").first
-            linhas_tabela = tabela_melhor.locator("tbody tr")
-            total_linhas_pagina = await linhas_tabela.count()
-
-            for j in range(total_linhas_pagina):
-                linha_item = linhas_tabela.nth(j)
-                texto_item = await linha_item.inner_text()
-
-                # Linha de grupo: "GRUPO 3 | 3 itens..." (começa com a
-                # palavra GRUPO, não com dígito). Checar isso ANTES do
-                # padrão de item avulso, senão nunca bate (não começa com
-                # dígito) e a linha de grupo inteira é silenciosamente
-                # pulada — bug real que já aconteceu aqui.
-                m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
-                m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
-
-                # Nenhum dos dois padrões bateu — pode ser a linha ainda
-                # carregando (texto vazio/parcial) logo após trocar de
-                # página/reabrir o fornecedor. Espera ativa e tenta de
-                # novo antes de desistir; SEMPRE loga se perder a linha,
-                # nunca pular um item em silêncio (já aconteceu: um
-                # GRUPO inteiro sumiu sem nenhum log quando isso não
-                # existia aqui).
-                if not m_grupo and not m_num:
-                    for _ in range(15):
-                        await page.wait_for_timeout(300)
-                        texto_item = await linha_item.inner_text()
-                        m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
-                        m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
-                        if m_grupo or m_num:
-                            break
-
-                if m_grupo:
-                    log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
-                    itens_do_grupo = await expandir_grupo_e_coletar_itens(page, linha_item, cnpj)
-                    itens_completos.extend(itens_do_grupo)
-                    await _voltar(page, 2)
-                else:
-                    if not m_num:
-                        log(f"  ⚠ Linha {j} do fornecedor {cnpj} não bateu em nenhum padrão (grupo/item) mesmo após esperar — PULADA. Texto: {texto_item[:100]!r}")
-                        continue
-
-                    # A linha compacta só tem o rótulo "Valor estimado :" seguido
-                    # de DOIS números (estimado, depois ofertado, sem rótulo repetido).
-                    m_valor = re.search(r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)", texto_item)
-                    detalhe = await expandir_item_avulso_e_extrair(page, linha_item, cnpj)
-                    itens_completos.append({
-                        "numero_item": m_num.group(1),
-                        "descricao_curta": _limpar(m_num.group(2)),
-                        "valor_unitario_ofertado": m_valor.group(2) if m_valor else "",
-                        **detalhe,
-                    })
-                    await _voltar(page, 1)
-
-                # Depois de voltar, o "Voltar" costuma cair na aba "Itens"
-                # (estado padrão da URL), não mantém a aba "Fornecedores"
-                # selecionada — precisa clicar nela nome antes de re-expandir.
-                # Re-expandir também sempre volta a tabela pra PÁGINA 1, então
-                # se estávamos numa página > 1, precisa re-navegar até ela.
-                aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
-                await aba_fornecedores.click()
+        try:
+            await _processar_um_fornecedor(
+                page, linhas, i, linha, cnpj, nome, m_habilitados, resultado
+            )
+        except Exception as e:
+            # Um fornecedor com muitos itens/grupos pode levar muitos
+            # minutos de idas e voltas — se o SPA degradar no meio
+            # disso (confirmado: aconteceu numa varredura real, depois
+            # de ~8min seguidos de navegação), uma exceção não tratada
+            # aqui matava o processo inteiro e derrubava os fornecedores
+            # ainda não processados junto. Loga, tenta recuperar um
+            # estado conhecido (aba Fornecedores) e segue pro próximo —
+            # o CONTROLE_BOT/log deixa claro que esse fornecedor ficou
+            # incompleto, pra ser reprocessado depois em vez de travar
+            # a varredura toda.
+            log(f"  ⚠ Falha ao processar fornecedor {cnpj} ({nome}) — PULADO, retomando no próximo. Erro: {e}")
+            try:
+                aba_fornecedores_recuperar = page.get_by_text("Fornecedores", exact=True).first
+                await aba_fornecedores_recuperar.click()
                 await page.wait_for_timeout(2000)
-
-                linha = linhas.nth(i)
-                await _expandir_fornecedor(page, linha)
-
-                for _ in range(pagina_atual - 1):
-                    await _ir_para_proxima_pagina(page, linha)
-
-                tabela_melhor = linha.locator("table").first
-                linhas_tabela = tabela_melhor.locator("tbody tr")
-
-            if not await _tem_proxima_pagina(linha):
-                break
-
-            log(f"    Indo para página {pagina_atual + 1} de itens do fornecedor...")
-            await _ir_para_proxima_pagina(page, linha)
-            pagina_atual += 1
-
-        # "Itens habilitados" no card do fornecedor conta LINHAS da
-        # tabela (uma linha de grupo = 1 linha, mas vira N itens depois
-        # de expandida) — não é diretamente comparável a len(itens_completos)
-        # quando há grupos. Serve só de referência, não de validação exata.
-        log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (linhas habilitadas no card: {m_habilitados.group(1)} de {m_habilitados.group(2)})")
-
-        resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens_completos})
+            except Exception:
+                pass
 
         if arquivo_progresso:
             Path(arquivo_progresso).write_text(
@@ -714,6 +638,112 @@ async def coletar_fornecedores_itens(page, arquivo_progresso: str | None = None)
             )
 
     return resultado
+
+
+async def _processar_um_fornecedor(page, linhas, i, linha, cnpj, nome, m_habilitados, resultado) -> None:
+    """Processa um único fornecedor já localizado na lista (índice `i`),
+    coleta todos os itens (com paginação) e adiciona o resultado a
+    `resultado` (mutado in-place). Extraída de coletar_fornecedores_itens
+    para poder envolver o processamento de CADA fornecedor num try/except
+    sem derrubar os demais se um falhar no meio (ver nota no chamador)."""
+    expandiu = await _expandir_fornecedor(page, linha)
+    if not expandiu:
+        log(f"  ⚠ Não consegui expandir fornecedor {cnpj} — pulando.")
+        return
+
+    itens_completos = []
+    pagina_atual = 1
+
+    while True:
+        # Localiza a PRIMEIRA tabela dentro da linha do fornecedor — é
+        # sempre a de "...é o melhor classificado" (vem antes da de
+        # "...não é o melhor classificado" na ordem do documento).
+        tabela_melhor = linha.locator("table").first
+        linhas_tabela = tabela_melhor.locator("tbody tr")
+        total_linhas_pagina = await linhas_tabela.count()
+
+        for j in range(total_linhas_pagina):
+            linha_item = linhas_tabela.nth(j)
+            texto_item = await linha_item.inner_text()
+
+            # Linha de grupo: "GRUPO 3 | 3 itens..." (começa com a
+            # palavra GRUPO, não com dígito). Checar isso ANTES do
+            # padrão de item avulso, senão nunca bate (não começa com
+            # dígito) e a linha de grupo inteira é silenciosamente
+            # pulada — bug real que já aconteceu aqui.
+            m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
+            m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
+
+            # Nenhum dos dois padrões bateu — pode ser a linha ainda
+            # carregando (texto vazio/parcial) logo após trocar de
+            # página/reabrir o fornecedor. Espera ativa e tenta de
+            # novo antes de desistir; SEMPRE loga se perder a linha,
+            # nunca pular um item em silêncio (já aconteceu: um
+            # GRUPO inteiro sumiu sem nenhum log quando isso não
+            # existia aqui).
+            if not m_grupo and not m_num:
+                for _ in range(15):
+                    await page.wait_for_timeout(300)
+                    texto_item = await linha_item.inner_text()
+                    m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
+                    m_num = None if m_grupo else re.match(r"(\d+)\s+([^\n]+)", texto_item)
+                    if m_grupo or m_num:
+                        break
+
+            if m_grupo:
+                log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
+                itens_do_grupo = await expandir_grupo_e_coletar_itens(page, linha_item, cnpj)
+                itens_completos.extend(itens_do_grupo)
+                await _voltar(page, 2)
+            else:
+                if not m_num:
+                    log(f"  ⚠ Linha {j} do fornecedor {cnpj} não bateu em nenhum padrão (grupo/item) mesmo após esperar — PULADA. Texto: {texto_item[:100]!r}")
+                    continue
+
+                # A linha compacta só tem o rótulo "Valor estimado :" seguido
+                # de DOIS números (estimado, depois ofertado, sem rótulo repetido).
+                m_valor = re.search(r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)", texto_item)
+                detalhe = await expandir_item_avulso_e_extrair(page, linha_item, cnpj)
+                itens_completos.append({
+                    "numero_item": m_num.group(1),
+                    "descricao_curta": _limpar(m_num.group(2)),
+                    "valor_unitario_ofertado": m_valor.group(2) if m_valor else "",
+                    **detalhe,
+                })
+                await _voltar(page, 1)
+
+            # Depois de voltar, o "Voltar" costuma cair na aba "Itens"
+            # (estado padrão da URL), não mantém a aba "Fornecedores"
+            # selecionada — precisa clicar nela nome antes de re-expandir.
+            # Re-expandir também sempre volta a tabela pra PÁGINA 1, então
+            # se estávamos numa página > 1, precisa re-navegar até ela.
+            aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
+            await aba_fornecedores.click()
+            await page.wait_for_timeout(2000)
+
+            linha = linhas.nth(i)
+            await _expandir_fornecedor(page, linha)
+
+            for _ in range(pagina_atual - 1):
+                await _ir_para_proxima_pagina(page, linha)
+
+            tabela_melhor = linha.locator("table").first
+            linhas_tabela = tabela_melhor.locator("tbody tr")
+
+        if not await _tem_proxima_pagina(linha):
+            break
+
+        log(f"    Indo para página {pagina_atual + 1} de itens do fornecedor...")
+        await _ir_para_proxima_pagina(page, linha)
+        pagina_atual += 1
+
+    # "Itens habilitados" no card do fornecedor conta LINHAS da
+    # tabela (uma linha de grupo = 1 linha, mas vira N itens depois
+    # de expandida) — não é diretamente comparável a len(itens_completos)
+    # quando há grupos. Serve só de referência, não de validação exata.
+    log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (linhas habilitadas no card: {m_habilitados.group(1)} de {m_habilitados.group(2)})")
+
+    resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens_completos})
 
 
 def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05") -> str:
