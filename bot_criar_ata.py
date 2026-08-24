@@ -840,6 +840,106 @@ async def clonar_ata_modelo(page) -> str:
     return identificador_clone
 
 
+# =========================================================
+# EDITOR DO CLONE — navegação até a seção e preenchimento
+# =========================================================
+# A tela do editor (.../artefatos/edit/<id>?artefato=<num>/<ano>&tipo=ARP)
+# tem uma barra lateral "SEÇÕES DO DOCUMENTO" organizada como 4
+# accordions Bootstrap (#collapse-title-0..3 / #collapse-0..3):
+# "Informações Básicas", "ATA DE REGISTRO DE PREÇOS" (contém as 12
+# subseções numeradas do texto, incluindo "2. DOS PREÇOS, ESPECIFICAÇÕES
+# E QUANTITATIVOS" e "3. ÓRGÃO(S) GERENCIADOR E PARTICIPANTE(S)"),
+# "Responsáveis" e "Anexos". Os accordions fecham sozinhos entre
+# interações (confirmado: abrir e clicar num subitem em execuções
+# separadas falha porque o accordion já tinha fechado de novo) — por
+# isso abrir_secao_documento() sempre checa e reabre o accordion pai
+# antes de clicar no subitem, na mesma chamada.
+#
+# Clicar numa subseção abre o corpo dela como um editor rich text
+# (provavelmente TinyMCE/CKEditor) dentro de um <iframe> cujo `src` é
+# 'about:blank' mesmo depois de carregado — é preciso usar
+# `page.frames[1]` (o segundo frame da página, não o `name`/`url` dele)
+# pra acessar o conteúdo real.
+#
+# Tabela de "DOS PREÇOS, ESPECIFICAÇÕES E QUANTITATIVOS" (validado
+# manualmente no clone 297/2026): tem 3 <tr> —
+#   tr[0]: "Grupo do TR" (rowspan=2), "Item do TR" (rowspan=2),
+#          "Fornecedor:/cnpj:/endereço:/contatos:/representante:"
+#          (colspan=8) — um bloco de 5 <p> separados, um por rótulo,
+#          que fica ACIMA de toda a tabela de itens (cada Ata/clone é
+#          de UM fornecedor só; não é uma coluna por linha de item).
+#   tr[1]: cabeçalho das 8 colunas de dado: Especificação, Marca,
+#          Modelo, Unidade, Quantidade Máxima, Quantidade Mínima,
+#          Valor Unitário, Prazo de validade.
+#   tr[2]: primeira (e única, no modelo) linha de dados — 10 <td>
+#          vazios + "12 Meses" já preenchido no Prazo de validade.
+# Preencher uma célula: clicar no <p>/<td>, `press("End")` pra ir pro
+# fim do texto existente, depois `type()` o valor. Confirmado
+# funcionando: preencher só "Fornecedor:" e "cnpj:" na célula de
+# cabeçalho, sem tocar em endereço/contatos/representante.
+
+
+async def abrir_secao_documento(page, indice_accordion: int, texto_subitem: str):
+    """Garante que o accordion `indice_accordion` (0-3, ver notas acima)
+    está aberto e clica no subitem cujo texto contenha `texto_subitem`
+    (ex: "DOS PREÇOS" ou "GERENCIADOR"). Retorna o frame do editor rich
+    text da subseção (page.frames[1] depois do clique).
+
+    Sempre checa/reabre o accordion na mesma chamada — confirmado que
+    ele fecha sozinho entre interações separadas."""
+    titulo = page.locator(f"#collapse-title-{indice_accordion}")
+    conteudo = page.locator(f"#collapse-{indice_accordion}")
+
+    cls = await conteudo.get_attribute("class") or ""
+    if "show" not in cls:
+        await titulo.click()
+        await page.wait_for_timeout(1000)
+
+    subitem = conteudo.get_by_text(texto_subitem, exact=False).first
+    try:
+        await subitem.wait_for(state="visible", timeout=8000)
+    except Exception:
+        raise RuntimeError(
+            f"Não achei/não consegui abrir o subitem contendo {texto_subitem!r} no accordion {indice_accordion}."
+        )
+
+    await subitem.click()
+    await page.wait_for_timeout(2500)
+
+    if len(page.frames) < 2:
+        raise RuntimeError(
+            f"Cliquei em {texto_subitem!r} mas o iframe do editor rich text não apareceu (frames: {len(page.frames)})."
+        )
+
+    return page.frames[1]
+
+
+async def preencher_fornecedor_cnpj(frame_editor, nome_fornecedor: str, cnpj: str) -> None:
+    """Na tabela de 'DOS PREÇOS, ESPECIFICAÇÕES E QUANTITATIVOS' (já
+    aberta em `frame_editor`, ver abrir_secao_documento), preenche
+    APENAS os rótulos 'Fornecedor:' e 'cnpj:' da célula de cabeçalho
+    (tr[0], td[2]) com os valores dados. NUNCA toca em endereço:,
+    contatos: ou representante: — regra do projeto: só a Fornecedor e
+    o CNPJ são preenchidos automaticamente, o resto fica para
+    preenchimento manual humano."""
+    tabela = frame_editor.locator("table").first
+    celula_fornecedor = tabela.locator("tr").nth(0).locator("td, th").nth(2)
+    paragrafos = celula_fornecedor.locator("p")
+
+    p_fornecedor = paragrafos.nth(0)
+    p_cnpj = paragrafos.nth(1)
+
+    await p_fornecedor.click()
+    await frame_editor.locator("body").press("End")
+    await frame_editor.locator("body").type(f" {nome_fornecedor}")
+
+    await p_cnpj.click()
+    await frame_editor.locator("body").press("End")
+    await frame_editor.locator("body").type(f" {cnpj}")
+
+    log(f"Fornecedor/CNPJ preenchidos no cabeçalho da tabela de itens: {nome_fornecedor} / {cnpj}")
+
+
 async def main():
     try:
         abrir_chrome()
