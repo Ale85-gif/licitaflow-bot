@@ -269,9 +269,18 @@ async def _expandir_fornecedor(page, linha_locator) -> bool:
 
     await botao.scroll_into_view_if_needed()
     await botao.click()
-    await page.wait_for_timeout(1200)
 
-    return (await botao.get_attribute("aria-expanded")) == "true"
+    # Espera ativa pelo atributo virar "true" (até 8s), em vez de um
+    # timeout fixo — mesma classe de bug de timing confirmada em outros
+    # pontos do arquivo (ver expandir_item_avulso_e_extrair). Depois que
+    # vira "true", uma folga curta pro conteúdo interno assentar.
+    for _ in range(40):
+        if (await botao.get_attribute("aria-expanded")) == "true":
+            await page.wait_for_timeout(300)
+            return True
+        await page.wait_for_timeout(200)
+
+    return False
 
 
 _RE_ITEM_EXPANDIDO = re.compile(
@@ -312,10 +321,18 @@ async def expandir_item_individual(item_locator, page) -> dict:
     if await chevron.count() > 0:
         await chevron.scroll_into_view_if_needed()
         await chevron.click()
-        await page.wait_for_timeout(1200)
+        # Espera ativa pelo conteúdo expandido aparecer (mesma classe de
+        # bug de timing confirmada em outros pontos do arquivo).
+        for _ in range(40):
+            if "Quantidade ofertada" in await item_locator.inner_text():
+                break
+            await page.wait_for_timeout(200)
 
     texto = await item_locator.inner_text()
-    return _parsear_item_expandido(texto)
+    detalhe = _parsear_item_expandido(texto)
+    if not detalhe:
+        log("  ⚠ Não consegui extrair detalhe do item expandido (conteúdo não apareceu a tempo).")
+    return detalhe
 
 
 async def expandir_item_avulso_e_extrair(page, tr_locator, cnpj_fornecedor: str) -> dict:
@@ -342,10 +359,15 @@ async def expandir_item_avulso_e_extrair(page, tr_locator, cnpj_fornecedor: str)
 
     await botao_mais.scroll_into_view_if_needed()
     await botao_mais.click()
-    await page.wait_for_timeout(2000)
 
+    # Espera ativa pelo CNPJ aparecer (em vez de timeout fixo) — em
+    # itens com mais fornecedores pra renderizar, 2000ms fixos às vezes
+    # não bastavam e a função concluía (errado) que o fornecedor não
+    # estava na tela, quando na verdade só ainda não tinha carregado.
     linha_fornecedor = page.get_by_text(cnpj_fornecedor, exact=False).first
-    if await linha_fornecedor.count() == 0:
+    try:
+        await linha_fornecedor.wait_for(state="visible", timeout=8000)
+    except Exception:
         log(f"  ⚠ Não achei o fornecedor {cnpj_fornecedor} na visão geral do item.")
         return {}
 
@@ -357,8 +379,21 @@ async def expandir_item_avulso_e_extrair(page, tr_locator, cnpj_fornecedor: str)
         log(f"  ⚠ Não consegui expandir a proposta do fornecedor {cnpj_fornecedor} no item.")
         return {}
 
+    # aria-expanded="true" não garante que o conteúdo (Quantidade
+    # ofertada/Marca/Modelo) já renderizou — confirmado: em execuções
+    # mais longas, vários itens seguidos vinham com esse conteúdo ainda
+    # vazio mesmo com a proposta "expandida". Espera ativa pelo texto
+    # aparecer antes de tentar extrair.
+    for _ in range(40):
+        if "Quantidade ofertada" in await linha_fornecedor_container.inner_text():
+            break
+        await page.wait_for_timeout(200)
+
     texto = await linha_fornecedor_container.inner_text()
-    return _parsear_item_expandido(texto)
+    detalhe = _parsear_item_expandido(texto)
+    if not detalhe:
+        log(f"  ⚠ Proposta do fornecedor {cnpj_fornecedor} expandiu mas o conteúdo não apareceu a tempo.")
+    return detalhe
 
 
 async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornecedor: str) -> list[dict]:
@@ -378,10 +413,14 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
     unitário todos batendo com o esperado). Validado com o pregão na
     etapa "Adjudicação/Homologação" (etapa=AH). Numa tentativa anterior,
     com o pregão na etapa "Fase Recursal" (etapa=FR), o passo de achar
-    `cnpj_fornecedor` na visão geral do grupo falhou — não se sabe se é
-    porque a tela em FR mostra menos informação, ou só timing. Se for
-    chamar essa função com o pregão numa fase diferente de AH, vale
-    testar de novo antes de confiar no resultado.
+    `cnpj_fornecedor` na visão geral do grupo falhou — foi confirmado
+    depois que ESSE MESMO tipo de falha ("não achei o fornecedor")
+    também acontecia em etapa=AH por causa de timing (2000ms fixos não
+    bastavam sempre; trocado por espera ativa, ver código). Muito
+    provavelmente a falha em FR era o mesmo problema, mas isso não foi
+    reconfirmado especificamente em FR — se for chamar essa função com
+    o pregão numa fase diferente de AH, vale testar de novo antes de
+    confiar no resultado.
     """
     botao_mais = linha_grupo_locator.locator("button:has(i.fa-plus-square)").first
     if await botao_mais.count() == 0:
@@ -390,12 +429,15 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
 
     await botao_mais.scroll_into_view_if_needed()
     await botao_mais.click()
-    await page.wait_for_timeout(2000)
 
     # Visão geral do grupo: lista TODOS os fornecedores que disputaram
     # esse grupo, não só o nosso alvo — precisa achar a linha certa.
+    # Espera ativa (em vez de timeout fixo) — ver nota em
+    # expandir_item_avulso_e_extrair, mesmo bug de timing confirmado lá.
     linha_fornecedor = page.get_by_text(cnpj_fornecedor, exact=False).first
-    if await linha_fornecedor.count() == 0:
+    try:
+        await linha_fornecedor.wait_for(state="visible", timeout=8000)
+    except Exception:
         log(f"  ⚠ Não achei o fornecedor {cnpj_fornecedor} na visão geral do grupo.")
         return []
 
@@ -407,9 +449,30 @@ async def expandir_grupo_e_coletar_itens(page, linha_grupo_locator, cnpj_fornece
         log(f"  ⚠ Não consegui expandir a proposta do fornecedor {cnpj_fornecedor} no grupo.")
         return []
 
+    # O link só existe no DOM depois que a proposta termina de
+    # expandir/renderizar. Espera ativa (8s) normalmente resolve, mas em
+    # alguns casos reais (confirmado: mesmo fornecedor/pregão, ora falha
+    # ora não, sem diferença estrutural visível) 8s não bastaram — então
+    # tenta de novo fechando e reabrindo a proposta, até 3 tentativas,
+    # em vez de desistir na primeira falha e perder itens silenciosamente.
     link_itens_grupo = page.locator("button, a").filter(has_text="Itens do grupo").first
-    if await link_itens_grupo.count() == 0:
-        log("  ⚠ Não achei o link 'Itens do grupo >>'.")
+    achou_link = False
+
+    for tentativa in range(3):
+        try:
+            await link_itens_grupo.wait_for(state="visible", timeout=8000)
+            achou_link = True
+            break
+        except Exception:
+            if tentativa < 2:
+                log(f"  ⚠ Link 'Itens do grupo >>' não apareceu (tentativa {tentativa + 1}/3) — fechando e reabrindo a proposta...")
+                await linha_fornecedor_container.locator("button[aria-expanded]").first.click()
+                await page.wait_for_timeout(800)
+                if not await _expandir_fornecedor(page, linha_fornecedor_container):
+                    continue
+
+    if not achou_link:
+        log("  ⚠ Não achei o link 'Itens do grupo >>' após 3 tentativas.")
         return []
 
     await link_itens_grupo.scroll_into_view_if_needed()
@@ -447,11 +510,43 @@ async def _voltar(page, vezes: int = 1) -> None:
     a navegação entre cada clique."""
     for _ in range(vezes):
         voltar = page.get_by_text("Voltar", exact=True).first
-        if await voltar.count() == 0:
+        # Espera ativa pelo botão aparecer — a tela anterior (proposta
+        # do item/grupo recém expandida) pode levar um instante a mais
+        # pra renderizar o "Voltar" do que os 200-300ms que os passos
+        # anteriores já esperaram; sem isso, o quem chama seguia achando
+        # que já tinha voltado quando na real ainda não navegou nada.
+        try:
+            await voltar.wait_for(state="visible", timeout=8000)
+        except Exception:
             log("  ⚠ Botão 'Voltar' não encontrado ao tentar navegar de volta.")
             return
         await voltar.click()
         await page.wait_for_timeout(3000)
+
+
+async def _tem_proxima_pagina(linha_fornecedor_locator) -> bool:
+    """Verifica se a tabela 'melhor classificado' da linha do fornecedor
+    tem mais uma página disponível. O componente p-paginator do PrimeNG
+    fica sempre presente no DOM (mesmo com só 1 página) mas só fica
+    visível quando há mais itens do que cabem numa página (10 por
+    página, confirmado em teste real: fornecedor com 19 linhas
+    distribuídas em página 1 com 10 + página 2 com 9)."""
+    paginador = linha_fornecedor_locator.locator("p-paginator").first
+    if await paginador.count() == 0 or not await paginador.is_visible():
+        return False
+
+    proximo = paginador.locator(".p-paginator-next").first
+    if await proximo.count() == 0:
+        return False
+
+    return (await proximo.get_attribute("disabled")) is None
+
+
+async def _ir_para_proxima_pagina(page, linha_fornecedor_locator) -> None:
+    proximo = linha_fornecedor_locator.locator("p-paginator .p-paginator-next").first
+    await proximo.scroll_into_view_if_needed()
+    await proximo.click()
+    await page.wait_for_timeout(1500)
 
 
 async def coletar_fornecedores_itens(page) -> list[dict]:
@@ -469,9 +564,12 @@ async def coletar_fornecedores_itens(page) -> list[dict]:
 
     ATENÇÃO: isso navega bastante (entra e sai da tela de cada item),
     então é lento — para um fornecedor com N itens, são ~N idas e
-    voltas. Ainda não trata paginação dentro da lista "melhor
-    classificado" (fornecedores com muitos itens podem ter mais de
-    uma página ali) — ver nota no topo do arquivo.
+    voltas. Trata paginação da lista "melhor classificado" (10 linhas
+    por página, confirmado em teste real — um fornecedor com "19 de 19"
+    linhas habilitadas tinha 10 na página 1 e 9 na página 2; sem tratar
+    isso, os itens da página 2 eram silenciosamente perdidos mesmo o
+    total de itens coletados "batendo" por coincidência com a contagem
+    de linhas da página 1 sozinha).
     """
     aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
     if await aba_fornecedores.count() > 0:
@@ -508,61 +606,80 @@ async def coletar_fornecedores_itens(page) -> list[dict]:
             log(f"  ⚠ Não consegui expandir fornecedor {cnpj} — pulando.")
             continue
 
-        # Localiza a PRIMEIRA tabela dentro da linha do fornecedor — é
-        # sempre a de "...é o melhor classificado" (vem antes da de
-        # "...não é o melhor classificado" na ordem do documento).
-        tabela_melhor = linha.locator("table").first
-        linhas_tabela = tabela_melhor.locator("tbody tr")
-        total_linhas_item = await linhas_tabela.count()
-
         itens_completos = []
+        pagina_atual = 1
 
-        for j in range(total_linhas_item):
-            linha_item = linhas_tabela.nth(j)
-            texto_item = await linha_item.inner_text()
-
-            # Linha de grupo: "GRUPO 3 | 3 itens..." (começa com a
-            # palavra GRUPO, não com dígito). Checar isso ANTES do
-            # padrão de item avulso, senão nunca bate (não começa com
-            # dígito) e a linha de grupo inteira é silenciosamente
-            # pulada — bug real que já aconteceu aqui.
-            m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
-
-            if m_grupo:
-                log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
-                itens_do_grupo = await expandir_grupo_e_coletar_itens(page, linha_item, cnpj)
-                itens_completos.extend(itens_do_grupo)
-                await _voltar(page, 2)
-            else:
-                m_num = re.match(r"(\d+)\s+([^\n]+)", texto_item)
-                if not m_num:
-                    continue
-
-                # A linha compacta só tem o rótulo "Valor estimado :" seguido
-                # de DOIS números (estimado, depois ofertado, sem rótulo repetido).
-                m_valor = re.search(r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)", texto_item)
-                detalhe = await expandir_item_avulso_e_extrair(page, linha_item, cnpj)
-                itens_completos.append({
-                    "numero_item": m_num.group(1),
-                    "descricao_curta": _limpar(m_num.group(2)),
-                    "valor_unitario_ofertado": m_valor.group(2) if m_valor else "",
-                    **detalhe,
-                })
-                await _voltar(page, 1)
-
-            # Depois de voltar, o "Voltar" costuma cair na aba "Itens"
-            # (estado padrão da URL), não mantém a aba "Fornecedores"
-            # selecionada — precisa clicar nela nome antes de re-expandir.
-            aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
-            await aba_fornecedores.click()
-            await page.wait_for_timeout(2000)
-
-            linha = linhas.nth(i)
-            await _expandir_fornecedor(page, linha)
+        while True:
+            # Localiza a PRIMEIRA tabela dentro da linha do fornecedor — é
+            # sempre a de "...é o melhor classificado" (vem antes da de
+            # "...não é o melhor classificado" na ordem do documento).
             tabela_melhor = linha.locator("table").first
             linhas_tabela = tabela_melhor.locator("tbody tr")
+            total_linhas_pagina = await linhas_tabela.count()
 
-        log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (esperado: {m_habilitados.group(1)})")
+            for j in range(total_linhas_pagina):
+                linha_item = linhas_tabela.nth(j)
+                texto_item = await linha_item.inner_text()
+
+                # Linha de grupo: "GRUPO 3 | 3 itens..." (começa com a
+                # palavra GRUPO, não com dígito). Checar isso ANTES do
+                # padrão de item avulso, senão nunca bate (não começa com
+                # dígito) e a linha de grupo inteira é silenciosamente
+                # pulada — bug real que já aconteceu aqui.
+                m_grupo = re.match(r"GRUPO\s+(\d+)\s*\|\s*(\d+)\s*itens?", texto_item, re.IGNORECASE)
+
+                if m_grupo:
+                    log(f"    Grupo {m_grupo.group(1)} ({m_grupo.group(2)} itens)...")
+                    itens_do_grupo = await expandir_grupo_e_coletar_itens(page, linha_item, cnpj)
+                    itens_completos.extend(itens_do_grupo)
+                    await _voltar(page, 2)
+                else:
+                    m_num = re.match(r"(\d+)\s+([^\n]+)", texto_item)
+                    if not m_num:
+                        continue
+
+                    # A linha compacta só tem o rótulo "Valor estimado :" seguido
+                    # de DOIS números (estimado, depois ofertado, sem rótulo repetido).
+                    m_valor = re.search(r"Valor estimado\s*:\s*R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)", texto_item)
+                    detalhe = await expandir_item_avulso_e_extrair(page, linha_item, cnpj)
+                    itens_completos.append({
+                        "numero_item": m_num.group(1),
+                        "descricao_curta": _limpar(m_num.group(2)),
+                        "valor_unitario_ofertado": m_valor.group(2) if m_valor else "",
+                        **detalhe,
+                    })
+                    await _voltar(page, 1)
+
+                # Depois de voltar, o "Voltar" costuma cair na aba "Itens"
+                # (estado padrão da URL), não mantém a aba "Fornecedores"
+                # selecionada — precisa clicar nela nome antes de re-expandir.
+                # Re-expandir também sempre volta a tabela pra PÁGINA 1, então
+                # se estávamos numa página > 1, precisa re-navegar até ela.
+                aba_fornecedores = page.get_by_text("Fornecedores", exact=True).first
+                await aba_fornecedores.click()
+                await page.wait_for_timeout(2000)
+
+                linha = linhas.nth(i)
+                await _expandir_fornecedor(page, linha)
+
+                for _ in range(pagina_atual - 1):
+                    await _ir_para_proxima_pagina(page, linha)
+
+                tabela_melhor = linha.locator("table").first
+                linhas_tabela = tabela_melhor.locator("tbody tr")
+
+            if not await _tem_proxima_pagina(linha):
+                break
+
+            log(f"    Indo para página {pagina_atual + 1} de itens do fornecedor...")
+            await _ir_para_proxima_pagina(page, linha)
+            pagina_atual += 1
+
+        # "Itens habilitados" no card do fornecedor conta LINHAS da
+        # tabela (uma linha de grupo = 1 linha, mas vira N itens depois
+        # de expandida) — não é diretamente comparável a len(itens_completos)
+        # quando há grupos. Serve só de referência, não de validação exata.
+        log(f"  {cnpj} {nome}: {len(itens_completos)} item(ns) coletados (linhas habilitadas no card: {m_habilitados.group(1)} de {m_habilitados.group(2)})")
 
         resultado.append({"cnpj": cnpj, "fornecedor": nome, "itens": itens_completos})
 

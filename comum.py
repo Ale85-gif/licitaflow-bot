@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -23,7 +24,15 @@ DB_PATH = "dados.db"
 
 
 def log(msg: str) -> None:
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+    linha = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+    try:
+        print(linha, flush=True)
+    except UnicodeEncodeError:
+        # Console sem suporte a UTF-8 (cp1252 no PowerShell/cmd padrão do
+        # Windows) — evita derrubar o bot por causa de um caractere (ex:
+        # emoji ⚠) que não tem representação nessa codepage.
+        encoding = sys.stdout.encoding or "ascii"
+        print(linha.encode(encoding, errors="replace").decode(encoding), flush=True)
 
 
 def normalizar_espacos(txt) -> str:
