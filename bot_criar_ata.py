@@ -789,6 +789,17 @@ async def clonar_ata_modelo(page) -> str:
     editor dele.
     """
     identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
+
+    # A listagem é paginada e a ordenação não é óbvia (não é puramente
+    # cronológica nem numérica) — confirmado em teste real que, depois
+    # de navegar entre páginas em interações anteriores, o artefato
+    # modelo podia ficar "escondido" numa página diferente da 1ª. Reset
+    # pra primeira página sempre, antes de procurar.
+    botao_primeira_pagina = page.locator(".p-paginator-first").first
+    if await botao_primeira_pagina.count() > 0:
+        await botao_primeira_pagina.click()
+        await page.wait_for_timeout(1200)
+
     linha_num = page.get_by_text(identificador_modelo, exact=True).first
     # Espera ativa — mesma classe de bug de timing confirmada no resto
     # do arquivo (ver expandir_item_avulso_e_extrair). A listagem ainda
@@ -797,7 +808,8 @@ async def clonar_ata_modelo(page) -> str:
         await linha_num.wait_for(state="visible", timeout=8000)
     except Exception:
         raise RuntimeError(
-            f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais."
+            f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais "
+            f"(mesmo após resetar para a primeira página)."
         )
 
     linha_container = linha_num.locator("xpath=ancestor::tr[1]")
