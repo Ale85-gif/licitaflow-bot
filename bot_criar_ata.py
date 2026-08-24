@@ -797,8 +797,12 @@ async def clonar_ata_modelo(page) -> str:
     # pra primeira página sempre, antes de procurar.
     botao_primeira_pagina = page.locator(".p-paginator-first").first
     if await botao_primeira_pagina.count() > 0:
-        await botao_primeira_pagina.click()
-        await page.wait_for_timeout(1200)
+        # fica desabilitado quando já se está na 1ª página — clicar
+        # nesse estado trava esperando "enabled" até dar timeout.
+        desabilitado = await botao_primeira_pagina.get_attribute("disabled")
+        if desabilitado is None:
+            await botao_primeira_pagina.click()
+            await page.wait_for_timeout(1200)
 
     linha_num = page.get_by_text(identificador_modelo, exact=True).first
     # Espera ativa — mesma classe de bug de timing confirmada no resto
