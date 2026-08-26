@@ -1344,17 +1344,28 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
             # [inicio, fim] antes de clicar em "Remover Linhas";
             # re-tenta o arraste (nada foi removido ainda) até acertar
             # ou esgotar tentativas.
+            # Arrasta de BAIXO pra CIMA (começa em xf/yf, termina em
+            # xi/yi) — a seleção de texto/DOM cobre o mesmo intervalo
+            # independente da direção. Confirmado bug real com a
+            # direção original (início->fim): quando o bloco incluía a
+            # ÚLTIMA linha da tabela, mesmo centralizando o scroll a
+            # seleção sempre travava na primeira linha do bloco — a
+            # última linha da tabela não tem espaço abaixo dela na
+            # página pra "centralizar" de verdade (o navegador rola o
+            # máximo possível, mas ela fica perto da borda mesmo assim).
+            # Começar o arraste pela ponta "presa" evita depender de
+            # conseguir centralizá-la.
             selecao_correta = False
             for tentativa_arraste in range(3):
-                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xi, "y": yi, "button": "left", "clickCount": 1})
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xf, "y": yf, "button": "left", "clickCount": 1})
                 await page.wait_for_timeout(150)
                 passos = 6
                 for k in range(1, passos + 1):
-                    xm = xi + (xf - xi) * k / passos
-                    ym = yi + (yf - yi) * k / passos
+                    xm = xf + (xi - xf) * k / passos
+                    ym = yf + (yi - yf) * k / passos
                     await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": xm, "y": ym, "buttons": 1})
                     await page.wait_for_timeout(80)
-                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "left", "clickCount": 1})
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xi, "y": yi, "button": "left", "clickCount": 1})
                 await page.wait_for_timeout(400)
 
                 linhas_selecionadas = await frame_editor.evaluate(
