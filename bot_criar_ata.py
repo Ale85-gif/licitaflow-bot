@@ -1312,11 +1312,15 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
             cel_fim = await _celula_item_da_linha(linha_fim, indice_tabela)
             cel_meio = await _celula_item_da_linha(linha_meio, indice_tabela)
 
-            # rola pelo meio do bloco (não pela ponta) — com o bloco
-            # limitado a poucas linhas, isso garante início e fim
-            # visíveis ao mesmo tempo, sem a página rolar de novo entre
-            # calcular uma bounding box e a outra.
-            await cel_meio.scroll_into_view_if_needed()
+            # Rola pelo meio do bloco (não pela ponta), CENTRALIZANDO
+            # na viewport (block: 'center') em vez de só torná-lo
+            # minimamente visível — scroll_into_view_if_needed() pode
+            # deixar o elemento colado na borda da tela, sem folga.
+            # Confirmado bug real: o último bloco de uma tabela (linhas
+            # coladas no fim) ficava sem espaço suficiente abaixo, e o
+            # arraste até a linha final nunca selecionava direito
+            # (sempre parava na primeira linha do bloco).
+            await cel_meio.evaluate("el => el.scrollIntoView({block: 'center', behavior: 'instant'})")
             await page.wait_for_timeout(300)
 
             box_i = await cel_inicio.bounding_box()
