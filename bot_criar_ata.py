@@ -1422,15 +1422,20 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
     Retorna o identificador do clone criado (ex: "308/2026")."""
     identificador = await clonar_ata_modelo(page)
 
-    frame_editor = await abrir_secao_documento(page, 1, "DOS PREÇOS")
-    await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
-
-    quantidades_minimas = await extrair_tabela_quantidades(frame_editor, 1)
-    quantidades_maximas = await extrair_tabela_quantidades(frame_editor, 2)
+    # As tabelas de Quantidade Mínima/Máxima ficam na seção
+    # "GERENCIADOR" (ÓRGÃO(S) GERENCIADOR E PARTICIPANTE(S)), não na
+    # de "DOS PREÇOS" — precisa extrair de lá ANTES de montar os itens
+    # que vão ser preenchidos na tabela de preços.
+    frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
+    quantidades_minimas = await extrair_tabela_quantidades(frame_gerenciador, 1)
+    quantidades_maximas = await extrair_tabela_quantidades(frame_gerenciador, 2)
 
     itens_para_preencher = montar_itens_para_preenchimento(
         itens_coletados, itens_tr, quantidades_minimas, quantidades_maximas
     )
+
+    frame_editor = await abrir_secao_documento(page, 1, "DOS PREÇOS")
+    await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
     await preencher_tabela_itens(page, frame_editor, itens_para_preencher)
 
     numeros_item_fornecedor = {item["numero_item"] for item in itens_coletados}
