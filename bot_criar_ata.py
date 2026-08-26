@@ -1209,28 +1209,6 @@ async def extrair_tabela_quantidades(frame_editor, indice_tabela: int) -> dict:
     return resultado
 
 
-def _agrupar_indices_contiguos(indices: list[int]) -> list[tuple]:
-    """[8,9,10,11,15,16,20] -> [(8,11),(15,16),(20,20)]. Usado para
-    remover blocos de linhas contíguas de uma vez (seleção por arraste
-    + 'Remover Linhas'), em vez de uma linha por vez — necessário por
-    performance: uma tabela de ~85 linhas de item, para um fornecedor
-    com poucos itens, teria ~80 remoções individuais por tabela; feito
-    linha a linha isso levaria minutos por fornecedor, multiplicado por
-    dezenas de fornecedores é inviável."""
-    if not indices:
-        return []
-    blocos = []
-    inicio = fim = indices[0]
-    for idx in indices[1:]:
-        if idx == fim + 1:
-            fim = idx
-        else:
-            blocos.append((inicio, fim))
-            inicio = fim = idx
-    blocos.append((inicio, fim))
-    return blocos
-
-
 async def _celula_item_da_linha(linha_tr, indice_tabela: int):
     """Retorna o locator da célula 'ITEM' de uma linha de dado das
     tabelas de quantidade UGG/UGP. Essa célula NUNCA tem rowspan
@@ -1261,10 +1239,20 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
     editor) — só remove linha inteira via 'Remover Linhas' do menu de
     contexto, nunca edita célula a célula aqui.
 
-    Agrupa linhas consecutivas a remover em blocos (seleciona por
-    arraste + remove o bloco inteiro de uma vez) por performance. Cada
-    bloco é removido de baixo pra cima (último bloco primeiro), porque
-    remover linhas desloca os índices das linhas abaixo delas."""
+    Remove uma linha por vez (clique direito simples, sem arraste). Uma
+    versão anterior tentava selecionar blocos de várias linhas de uma
+    vez via arraste (bem mais rápida), mas se mostrou fundamentalmente
+    não confiável nesse editor — em testes reais, a seleção por arraste
+    ocasionalmente travava sem cobrir a linha final do bloco, em blocos
+    de posições diferentes na tabela (não só casos de borda como a
+    última linha), mesmo depois de várias tentativas de correção
+    (blocos menores, scroll centralizado, direção invertida, validação
+    prévia da seleção com retry). Clique direito único numa linha, sem
+    depender de arraste, nunca falhou em nenhum teste — mais lento, mas
+    correto é mais importante que rápido aqui.
+
+    Remove sempre de baixo pra cima (maior índice primeiro), porque
+    remover uma linha desloca os índices das linhas abaixo dela."""
     for indice_tabela in range(3):
         tabela = frame_editor.locator("table").nth(indice_tabela)
 
@@ -1282,147 +1270,37 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
             if item.isdigit() and item not in numeros_item_fornecedor:
                 indices_para_remover.append(r)
 
-        blocos_brutos = _agrupar_indices_contiguos(indices_para_remover)
+        log(f"  Tabela [{indice_tabela}]: removendo {len(indices_para_remover)} de {total_linhas - 2} linha(s) de item.")
 
-        # Blocos grandes demais aumentam a distância entre o ponto de
-        # início e fim do arraste, o que na prática se mostrou menos
-        # preciso (a célula de início pode sair da viewport enquanto só
-        # a de fim é usada pra decidir o scroll). Quebra em pedaços de
-        # no máximo MAX_LINHAS_POR_BLOCO pra manter o arraste curto e
-        # as duas pontas sempre visíveis ao mesmo tempo.
-        MAX_LINHAS_POR_BLOCO = 4
-        ultima_linha_tabela = total_linhas - 1
-        blocos = []
-        for inicio, fim in blocos_brutos:
-            cursor = inicio
-            while cursor <= fim:
-                fim_pedaco = min(cursor + MAX_LINHAS_POR_BLOCO - 1, fim)
-
-                # A ÚLTIMA linha da tabela é um caso de borda confirmado
-                # problemático: ela não tem espaço abaixo na página pra
-                # o navegador "centralizar" de verdade ao rolar, e a
-                # seleção por arraste (em qualquer direção) sempre
-                # travava sem cobrir essa linha. Um pedaço que INCLUI a
-                # última linha e tem mais de 1 linha é quebrado em
-                # blocos de 1 linha cada — remoção individual (sem
-                # arraste) é mais lenta mas comprovadamente confiável.
-                if fim_pedaco == ultima_linha_tabela and fim_pedaco > cursor:
-                    for linha_individual in range(cursor, fim_pedaco + 1):
-                        blocos.append((linha_individual, linha_individual))
-                else:
-                    blocos.append((cursor, fim_pedaco))
-                cursor = fim_pedaco + 1
-
-        log(f"  Tabela [{indice_tabela}]: removendo {len(indices_para_remover)} de {total_linhas - 2} linha(s) de item, em {len(blocos)} bloco(s).")
-
-        # 2ª passada (remoção, de baixo pra cima — último bloco primeiro).
+        # 2ª passada (remoção, de baixo pra cima).
         cdp = await page.context.new_cdp_session(page)
-        for inicio, fim in reversed(blocos):
-            linha_inicio = tabela.locator("tr").nth(inicio)
-            linha_fim = tabela.locator("tr").nth(fim)
-            linha_meio = tabela.locator("tr").nth((inicio + fim) // 2)
+        for r in reversed(indices_para_remover):
+            linha = tabela.locator("tr").nth(r)
+            celula = await _celula_item_da_linha(linha, indice_tabela)
 
-            cel_inicio = await _celula_item_da_linha(linha_inicio, indice_tabela)
-            cel_fim = await _celula_item_da_linha(linha_fim, indice_tabela)
-            cel_meio = await _celula_item_da_linha(linha_meio, indice_tabela)
+            await celula.evaluate("el => el.scrollIntoView({block: 'center', behavior: 'instant'})")
+            await page.wait_for_timeout(200)
 
-            # Rola pelo meio do bloco (não pela ponta), CENTRALIZANDO
-            # na viewport (block: 'center') em vez de só torná-lo
-            # minimamente visível — scroll_into_view_if_needed() pode
-            # deixar o elemento colado na borda da tela, sem folga.
-            # Confirmado bug real: o último bloco de uma tabela (linhas
-            # coladas no fim) ficava sem espaço suficiente abaixo, e o
-            # arraste até a linha final nunca selecionava direito
-            # (sempre parava na primeira linha do bloco).
-            await cel_meio.evaluate("el => el.scrollIntoView({block: 'center', behavior: 'instant'})")
-            await page.wait_for_timeout(300)
-
-            box_i = await cel_inicio.bounding_box()
-            box_f = await cel_fim.bounding_box()
-            if box_i is None or box_f is None:
+            box = await celula.bounding_box()
+            if box is None:
                 raise RuntimeError(
-                    f"Não consegui posicionar o bloco {inicio}-{fim} da tabela [{indice_tabela}] "
-                    f"para remover. Abortando — revise manualmente este clone antes de continuar."
+                    f"Não consegui posicionar a linha {r} da tabela [{indice_tabela}] para remover. "
+                    f"Abortando — revise manualmente este clone antes de continuar."
                 )
-
-            xi, yi = box_i["x"] + box_i["width"] / 2, box_i["y"] + box_i["height"] / 2
-            xf, yf = box_f["x"] + box_f["width"] / 2, box_f["y"] + box_f["height"] / 2
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
 
             linhas_antes = await tabela.locator("tr").count()
 
-            # Confere a seleção ANTES de remover — não depois. Uma
-            # remoção com contagem errada já é dano feito (não dá pra
-            # saber com segurança QUAL linha saiu a mais/menos e
-            # desfazer). Em vez disso, valida via getSelection() do
-            # navegador se o arraste selecionou EXATAMENTE as linhas
-            # [inicio, fim] antes de clicar em "Remover Linhas";
-            # re-tenta o arraste (nada foi removido ainda) até acertar
-            # ou esgotar tentativas.
-            # Arrasta de BAIXO pra CIMA (começa em xf/yf, termina em
-            # xi/yi) — a seleção de texto/DOM cobre o mesmo intervalo
-            # independente da direção. Confirmado bug real com a
-            # direção original (início->fim): quando o bloco incluía a
-            # ÚLTIMA linha da tabela, mesmo centralizando o scroll a
-            # seleção sempre travava na primeira linha do bloco — a
-            # última linha da tabela não tem espaço abaixo dela na
-            # página pra "centralizar" de verdade (o navegador rola o
-            # máximo possível, mas ela fica perto da borda mesmo assim).
-            # Começar o arraste pela ponta "presa" evita depender de
-            # conseguir centralizá-la.
-            selecao_correta = False
-            for tentativa_arraste in range(3):
-                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xf, "y": yf, "button": "left", "clickCount": 1})
-                await page.wait_for_timeout(150)
-                passos = 6
-                for k in range(1, passos + 1):
-                    xm = xf + (xi - xf) * k / passos
-                    ym = yf + (yi - yf) * k / passos
-                    await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": xm, "y": ym, "buttons": 1})
-                    await page.wait_for_timeout(80)
-                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xi, "y": yi, "button": "left", "clickCount": 1})
-                await page.wait_for_timeout(400)
-
-                linhas_selecionadas = await frame_editor.evaluate(
-                    """([tabelaIdx, inicioIdx, fimIdx]) => {
-                        const tabela = document.querySelectorAll('table')[tabelaIdx];
-                        const trs = tabela.querySelectorAll('tr');
-                        const sel = window.getSelection();
-                        const selecionadas = [];
-                        for (let i = 0; i < trs.length; i++) {
-                            if (sel.containsNode(trs[i], true)) selecionadas.push(i);
-                        }
-                        return selecionadas;
-                    }""",
-                    [indice_tabela, inicio, fim],
-                )
-
-                esperado_lista = list(range(inicio, fim + 1))
-                if linhas_selecionadas == esperado_lista:
-                    selecao_correta = True
-                    break
-
-                log(f"    ⚠ Seleção do bloco {inicio}-{fim} da tabela [{indice_tabela}] veio como {linhas_selecionadas} "
-                    f"(tentativa {tentativa_arraste + 1}/3) — tentando o arraste de novo antes de remover qualquer coisa.")
-                await page.mouse.click(50, 50)
-                await page.wait_for_timeout(400)
-
-            if not selecao_correta:
-                raise RuntimeError(
-                    f"Não consegui selecionar exatamente as linhas {inicio}-{fim} da tabela [{indice_tabela}] "
-                    f"após 3 tentativas de arraste. Abortando ANTES de remover nada deste bloco — "
-                    f"nenhum dado foi corrompido, mas revise manualmente este clone."
-                )
-
-            await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xf, "y": yf, "button": "right", "clickCount": 1})
-            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xf, "y": yf, "button": "right", "clickCount": 1})
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "right", "clickCount": 1})
+            await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "right", "clickCount": 1})
             await page.wait_for_timeout(1000)
 
             item_linha = await _achar_item_menu_visivel(page, "Linha")
             if item_linha is None:
                 raise RuntimeError(
-                    f"Não achei o menu 'Linha' pro bloco {inicio}-{fim} da tabela [{indice_tabela}]. "
-                    f"Abortando — nenhuma linha foi removida neste bloco, mas revise manualmente "
-                    f"este clone antes de continuar (a seleção pode ter ficado num estado inesperado)."
+                    f"Não achei o menu 'Linha' pra remover a linha {r} da tabela [{indice_tabela}]. "
+                    f"Abortando — nenhuma linha foi removida nesta tentativa, mas revise manualmente "
+                    f"este clone antes de continuar."
                 )
             await item_linha.click()
             await page.wait_for_timeout(800)
@@ -1430,30 +1308,20 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
             item_remover = await _achar_item_menu_visivel(page, "Remover Linhas", exato=False)
             if item_remover is None:
                 raise RuntimeError(
-                    f"Não achei 'Remover Linhas' pro bloco {inicio}-{fim} da tabela [{indice_tabela}]. "
+                    f"Não achei 'Remover Linhas' pra linha {r} da tabela [{indice_tabela}]. "
                     f"Abortando — revise manualmente este clone antes de continuar."
                 )
             await item_remover.click()
             await page.wait_for_timeout(1000)
 
-            # Verificação crítica: a contagem de linhas removidas TEM
-            # que bater exatamente com o tamanho do bloco pretendido.
-            # Confirmado em teste real que a seleção por arraste pode
-            # ocasionalmente pegar 1 linha a mais/menos, o que — sem
-            # essa checagem — removeria silenciosamente um item ERRADO
-            # (de outro fornecedor que deveria ficar, ou deixaria um
-            # item que deveria sair) sem nenhum aviso. Preferível parar
-            # tudo e avisar a continuar corrompendo o documento.
+            # Verificação de segurança: confere que exatamente 1 linha
+            # foi removida (nunca 0 nem 2+) antes de seguir pra próxima.
             linhas_depois = await tabela.locator("tr").count()
-            esperado = fim - inicio + 1
-            removido_de_fato = linhas_antes - linhas_depois
-            if removido_de_fato != esperado:
+            if linhas_antes - linhas_depois != 1:
                 raise RuntimeError(
-                    f"Remoção do bloco {inicio}-{fim} da tabela [{indice_tabela}] removeu "
-                    f"{removido_de_fato} linha(s), mas o esperado era {esperado}. "
-                    f"A seleção por arraste ficou imprecisa — abortando para não corromper mais "
-                    f"dados. Revise manualmente este clone (identificador da ata) antes de "
-                    f"continuar; não confie no restante das tabelas UGG/UGP sem checar."
+                    f"Remoção da linha {r} da tabela [{indice_tabela}] removeu "
+                    f"{linhas_antes - linhas_depois} linha(s) em vez de 1. Abortando para não "
+                    f"corromper mais dados — revise manualmente este clone antes de continuar."
                 )
 
     log("Remoção de itens não pertencentes ao fornecedor concluída nas 3 tabelas UGG/UGP.")
