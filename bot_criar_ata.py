@@ -1459,9 +1459,33 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
     await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
     await preencher_tabela_itens(page, frame_editor, itens_para_preencher)
 
+    # A remoção UGG é idempotente (relê o estado atual da tabela a cada
+    # chamada e só remove o que ainda precisa) — diferente do
+    # preenchimento acima, que sempre insere/digita, então nunca é
+    # seguro repetir sem duplicar. Por isso só esta etapa tem retry:
+    # confirmado em execução real que ela pode falhar por instabilidade
+    # pontual (timing, ou o servidor ficar fora do ar no meio), e
+    # tentar de novo NO MESMO clone resolve sem precisar recriar nada.
     numeros_item_fornecedor = {item["numero_item"] for item in itens_coletados}
-    frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
-    await remover_itens_nao_pertencentes_ugg(page, frame_gerenciador, numeros_item_fornecedor)
+    ultimo_erro = None
+    for tentativa in range(3):
+        try:
+            frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
+            await remover_itens_nao_pertencentes_ugg(page, frame_gerenciador, numeros_item_fornecedor)
+            ultimo_erro = None
+            break
+        except Exception as e:
+            ultimo_erro = e
+            log(f"  ⚠ Remoção UGG falhou (tentativa {tentativa + 1}/3) na ata {identificador}: {e}")
+            await page.wait_for_timeout(3000)
+
+    if ultimo_erro is not None:
+        raise RuntimeError(
+            f"Ata {identificador} ({nome_fornecedor}) ficou com Fornecedor/CNPJ e itens preenchidos, "
+            f"mas a remoção das tabelas UGG/UGP falhou 3 vezes seguidas. NÃO crie outra ata para este "
+            f"fornecedor — volte a este mesmo clone ({identificador}) e rode remover_itens_nao_pertencentes_ugg() "
+            f"de novo depois de confirmar que o sistema está respondendo normalmente. Último erro: {ultimo_erro}"
+        )
 
     log(f"Ata {identificador} criada para {nome_fornecedor} ({cnpj}) com {len(itens_para_preencher)} item(ns). "
         f"RASCUNHO pronto para revisão humana — 'Concluir' NÃO foi clicado.")
@@ -1477,10 +1501,13 @@ async def criar_atas_todos_fornecedores(
     fornecedor + CNPJ + identificador da ata (número/ano) criada para
     ele, ou o motivo da falha se não deu certo.
 
-    Um fornecedor que falhar (ex: dado faltando, erro de navegação) é
-    logado e pulado — não derruba os demais, mas também não inventa
-    nada pra "consertar" o problema: a linha dele no relatório final
-    mostra o erro, pra revisão manual.
+    Se um fornecedor falhar (mesmo depois dos retries internos de
+    criar_ata_fornecedor), o loop PARA nele — não segue criando atas
+    novas pros fornecedores seguintes. Pedido explícito do usuário:
+    se der erro, não ficar criando mais artefatos, voltar e corrigir o
+    que já existe antes de continuar. O relatório (e o CSV, se
+    `arquivo_relatorio` foi passado) mostra o que já deu certo até ali
+    e o erro exato do fornecedor que travou o processo.
 
     Se `arquivo_relatorio` for informado, salva a relação em CSV (nome,
     cnpj, identificador_ata, status) depois de CADA fornecedor
@@ -1505,16 +1532,15 @@ async def criar_atas_todos_fornecedores(
             identificador = await criar_ata_fornecedor(page, cnpj, nome, fornecedor["itens"], itens_tr)
             relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": identificador, "status": "OK"})
         except Exception as e:
-            log(f"  ⚠ Falha ao criar ata para {nome} ({cnpj}) — PULADO. Erro: {e}")
+            log(f"  ⚠ Falha ao criar ata para {nome} ({cnpj}) — PARANDO o processo aqui (não vou criar mais "
+                f"atas até isso ser revisado). Erro: {e}")
             relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": "", "status": f"ERRO: {e}"})
-            # tenta voltar pra listagem pra não travar o próximo fornecedor
-            try:
-                voltar = page.get_by_text("Voltar", exact=True).first
-                if await voltar.count() > 0:
-                    await voltar.click()
-                    await page.wait_for_timeout(2000)
-            except Exception:
-                pass
+            if arquivo_relatorio:
+                with open(arquivo_relatorio, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=["fornecedor", "cnpj", "ata", "status"])
+                    writer.writeheader()
+                    writer.writerows(relatorio)
+            raise
 
         if arquivo_relatorio:
             with open(arquivo_relatorio, "w", newline="", encoding="utf-8") as f:
