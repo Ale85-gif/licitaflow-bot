@@ -127,14 +127,34 @@ def extrair_itens_tr(caminho_pdf: str) -> dict:
 
                     if not item_limpo.isdigit():
                         continue
-                    if len(unidade_limpa) > 15 or not unidade_limpa:
+                    # Limite generoso pra não descartar unidades reais
+                    # mais longas — confirmado no PDF real: "ROLO COM
+                    # 100 METROS" (20 caracteres) é uma unidade válida
+                    # que o limite antigo (15) descartava, deixando o
+                    # item de fora do dict inteiro (itens 77/78/79 do
+                    # pregão 44/2026 sumiam silenciosamente).
+                    if len(unidade_limpa) > 40 or not unidade_limpa:
                         continue
                     if len(especificacao_limpa) < 5 or not re.search(r"[A-Za-zÀ-ÿ]{3,}", especificacao_limpa):
                         continue
 
-                    m_grupo = re.match(r"^(\d+)\b", _limpar(grupo))
+                    # No PDF, a coluna GRUPO mostra "-" explicitamente
+                    # para itens avulsos (confirmado: item 80, pregão
+                    # 44/2026). Precisa resetar grupo_atual pra "-"
+                    # nesse caso — senão ele ficava "grudado" no último
+                    # GRUPO numérico visto, marcando itens avulsos
+                    # como se pertencessem a um grupo que já tinha
+                    # acabado (bug real: item 80 saiu com "grupo": "6"
+                    # quando deveria ser "-"). Célula VAZIA (sem "-" e
+                    # sem número) é diferente — é a célula mesclada de
+                    # continuação de um grupo real no PDF, e aí sim
+                    # mantém grupo_atual como está.
+                    grupo_limpo = _limpar(grupo)
+                    m_grupo = re.match(r"^(\d+)\b", grupo_limpo)
                     if m_grupo:
                         grupo_atual = m_grupo.group(1)
+                    elif grupo_limpo == "-":
+                        grupo_atual = "-"
 
                     itens[item_limpo] = {
                         "grupo": grupo_atual,
