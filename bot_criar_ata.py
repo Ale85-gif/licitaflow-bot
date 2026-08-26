@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import csv
 import json
 import re
 import sys
@@ -1445,6 +1446,77 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
     log(f"Ata {identificador} criada para {nome_fornecedor} ({cnpj}) com {len(itens_para_preencher)} item(ns). "
         f"RASCUNHO pronto para revisão humana — 'Concluir' NÃO foi clicado.")
     return identificador
+
+
+async def criar_atas_todos_fornecedores(
+    page, fornecedores: list[dict], itens_tr: dict, arquivo_relatorio: str | None = None
+) -> list[dict]:
+    """Chama criar_ata_fornecedor() para cada fornecedor de
+    `fornecedores` (formato retornado por coletar_fornecedores_itens —
+    ignora quem tiver "itens" vazio) e monta a relação final: nome do
+    fornecedor + CNPJ + identificador da ata (número/ano) criada para
+    ele, ou o motivo da falha se não deu certo.
+
+    Um fornecedor que falhar (ex: dado faltando, erro de navegação) é
+    logado e pulado — não derruba os demais, mas também não inventa
+    nada pra "consertar" o problema: a linha dele no relatório final
+    mostra o erro, pra revisão manual.
+
+    Se `arquivo_relatorio` for informado, salva a relação em CSV (nome,
+    cnpj, identificador_ata, status) depois de CADA fornecedor
+    processado — mesma lógica de progresso incremental usada em
+    coletar_fornecedores_itens(), pra não perder tudo se a sessão cair
+    no meio de uma varredura longa (cada ata leva minutos pra ser
+    criada).
+
+    Deve ser chamada com `page` já na tela de listagem de Artefatos
+    Digitais."""
+    relatorio = []
+
+    fornecedores_com_itens = [f for f in fornecedores if f.get("itens")]
+    log(f"Criando atas para {len(fornecedores_com_itens)} fornecedor(es) com itens homologados...")
+
+    for i, fornecedor in enumerate(fornecedores_com_itens, start=1):
+        cnpj = fornecedor["cnpj"]
+        nome = fornecedor["fornecedor"]
+        log(f"[{i}/{len(fornecedores_com_itens)}] {nome} ({cnpj}) — {len(fornecedor['itens'])} item(ns)...")
+
+        try:
+            identificador = await criar_ata_fornecedor(page, cnpj, nome, fornecedor["itens"], itens_tr)
+            relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": identificador, "status": "OK"})
+        except Exception as e:
+            log(f"  ⚠ Falha ao criar ata para {nome} ({cnpj}) — PULADO. Erro: {e}")
+            relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": "", "status": f"ERRO: {e}"})
+            # tenta voltar pra listagem pra não travar o próximo fornecedor
+            try:
+                voltar = page.get_by_text("Voltar", exact=True).first
+                if await voltar.count() > 0:
+                    await voltar.click()
+                    await page.wait_for_timeout(2000)
+            except Exception:
+                pass
+
+        if arquivo_relatorio:
+            with open(arquivo_relatorio, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["fornecedor", "cnpj", "ata", "status"])
+                writer.writeheader()
+                writer.writerows(relatorio)
+
+        # de volta pra listagem, pronto pro próximo fornecedor
+        try:
+            voltar = page.get_by_text("Voltar", exact=True).first
+            if await voltar.count() > 0:
+                await voltar.click()
+                await page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+    ok = sum(1 for r in relatorio if r["status"] == "OK")
+    log(f"Concluído: {ok}/{len(relatorio)} ata(s) criada(s) com sucesso.")
+    if arquivo_relatorio:
+        log(f"Relação salva em: {arquivo_relatorio}")
+
+    return relatorio
 
 
 async def main():
