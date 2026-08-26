@@ -1327,6 +1327,121 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
     log("Remoção de itens não pertencentes ao fornecedor concluída nas 3 tabelas UGG/UGP.")
 
 
+# =========================================================
+# MONTAGEM DOS DADOS + ORQUESTRAÇÃO FINAL (uma ata por fornecedor)
+# =========================================================
+# Junta 3 fontes, cada uma com um pedaço diferente do item, e NUNCA
+# inventa o que faltar — se um item do fornecedor não tiver todos os
+# dados, para e avisa (ver montar_itens_para_preenchimento):
+#   - itens coletados (coletar_fornecedores_itens): marca, modelo,
+#     quantidade ofertada, valor unitário ofertado.
+#   - PDF do TR (extrair_itens_tr): grupo, especificação, unidade.
+#   - Tabelas UGG/UGP (extrair_tabela_quantidades, índices 1 e 2):
+#     Quantidade Mínima e Máxima (coluna A — a UASG do próprio
+#     pregão), casando por número de item.
+# Validado com dados reais: pregão 44/2026, fornecedor F DE OLIVEIRA,
+# 28 itens — todas as 3 fontes bateram sem nenhum dado faltando.
+
+
+def montar_itens_para_preenchimento(
+    itens_coletados: list[dict],
+    itens_tr: dict,
+    quantidades_minimas: dict,
+    quantidades_maximas: dict,
+) -> list[dict]:
+    """Combina as 3 fontes de dado em uma lista de dicts no formato
+    exigido por preencher_linha_item() (grupo_tr, item_tr,
+    especificacao, marca, modelo, unidade, quantidade_maxima,
+    quantidade_minima, valor_unitario).
+
+    `itens_coletados` é a lista "itens" de UM fornecedor, no formato
+    retornado por coletar_fornecedores_itens() (cada item tem
+    numero_item, marca, modelo, quantidade_ofertada,
+    valor_unitario_ofertado).
+
+    Levanta erro se QUALQUER item não tiver dado em alguma das 3
+    fontes — nunca preenche com vazio/inventado. A mensagem lista
+    exatamente quais itens e qual fonte faltou, pra revisão humana."""
+    resultado = []
+    problemas = []
+
+    for item in itens_coletados:
+        numero = item.get("numero_item", "")
+
+        dado_tr = itens_tr.get(numero)
+        dado_min = quantidades_minimas.get(numero)
+        dado_max = quantidades_maximas.get(numero)
+
+        if dado_tr is None:
+            problemas.append(f"item {numero}: sem dado no PDF do TR (especificação/unidade)")
+            continue
+        if dado_min is None:
+            problemas.append(f"item {numero}: sem dado na tabela de Quantidades Mínimas")
+            continue
+        if dado_max is None:
+            problemas.append(f"item {numero}: sem dado na tabela de Quantidades Máximas")
+            continue
+        if not item.get("marca") or not item.get("modelo"):
+            problemas.append(f"item {numero}: marca/modelo faltando nos dados coletados")
+            continue
+        if not item.get("valor_unitario_ofertado"):
+            problemas.append(f"item {numero}: valor unitário ofertado faltando nos dados coletados")
+            continue
+
+        resultado.append({
+            "grupo_tr": dado_tr["grupo"] or "-",
+            "item_tr": numero,
+            "especificacao": dado_tr["especificacao"],
+            "marca": item["marca"],
+            "modelo": item["modelo"],
+            "unidade": dado_tr["unidade"],
+            "quantidade_maxima": dado_max["col_a"],
+            "quantidade_minima": dado_min["col_a"],
+            "valor_unitario": item["valor_unitario_ofertado"],
+        })
+
+    if problemas:
+        raise ValueError(
+            "Não é seguro preencher a ata — faltam dados para " + str(len(problemas)) +
+            " item(ns) (nunca inventar): \n  " + "\n  ".join(problemas)
+        )
+
+    return resultado
+
+
+async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict) -> str:
+    """Cria a ata completa de UM fornecedor: clona a Ata 279, preenche
+    Fornecedor/CNPJ, preenche a tabela de itens com todos os dados
+    combinados, e remove das tabelas UGG/UGP os itens que não
+    pertencem a esse fornecedor. Deixa o clone como RASCUNHO pronto
+    pra revisão humana — NUNCA clica em "Concluir".
+
+    Deve ser chamada com `page` já na tela de listagem de Artefatos
+    Digitais (.../comprasnet-artefatos-web/leitor-artefato).
+
+    Retorna o identificador do clone criado (ex: "308/2026")."""
+    identificador = await clonar_ata_modelo(page)
+
+    frame_editor = await abrir_secao_documento(page, 1, "DOS PREÇOS")
+    await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
+
+    quantidades_minimas = await extrair_tabela_quantidades(frame_editor, 1)
+    quantidades_maximas = await extrair_tabela_quantidades(frame_editor, 2)
+
+    itens_para_preencher = montar_itens_para_preenchimento(
+        itens_coletados, itens_tr, quantidades_minimas, quantidades_maximas
+    )
+    await preencher_tabela_itens(page, frame_editor, itens_para_preencher)
+
+    numeros_item_fornecedor = {item["numero_item"] for item in itens_coletados}
+    frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
+    await remover_itens_nao_pertencentes_ugg(page, frame_gerenciador, numeros_item_fornecedor)
+
+    log(f"Ata {identificador} criada para {nome_fornecedor} ({cnpj}) com {len(itens_para_preencher)} item(ns). "
+        f"RASCUNHO pronto para revisão humana — 'Concluir' NÃO foi clicado.")
+    return identificador
+
+
 async def main():
     try:
         abrir_chrome()
