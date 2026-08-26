@@ -1291,12 +1291,26 @@ async def remover_itens_nao_pertencentes_ugg(page, frame_editor, numeros_item_fo
         # no máximo MAX_LINHAS_POR_BLOCO pra manter o arraste curto e
         # as duas pontas sempre visíveis ao mesmo tempo.
         MAX_LINHAS_POR_BLOCO = 4
+        ultima_linha_tabela = total_linhas - 1
         blocos = []
         for inicio, fim in blocos_brutos:
             cursor = inicio
             while cursor <= fim:
                 fim_pedaco = min(cursor + MAX_LINHAS_POR_BLOCO - 1, fim)
-                blocos.append((cursor, fim_pedaco))
+
+                # A ÚLTIMA linha da tabela é um caso de borda confirmado
+                # problemático: ela não tem espaço abaixo na página pra
+                # o navegador "centralizar" de verdade ao rolar, e a
+                # seleção por arraste (em qualquer direção) sempre
+                # travava sem cobrir essa linha. Um pedaço que INCLUI a
+                # última linha e tem mais de 1 linha é quebrado em
+                # blocos de 1 linha cada — remoção individual (sem
+                # arraste) é mais lenta mas comprovadamente confiável.
+                if fim_pedaco == ultima_linha_tabela and fim_pedaco > cursor:
+                    for linha_individual in range(cursor, fim_pedaco + 1):
+                        blocos.append((linha_individual, linha_individual))
+                else:
+                    blocos.append((cursor, fim_pedaco))
                 cursor = fim_pedaco + 1
 
         log(f"  Tabela [{indice_tabela}]: removendo {len(indices_para_remover)} de {total_linhas - 2} linha(s) de item, em {len(blocos)} bloco(s).")
