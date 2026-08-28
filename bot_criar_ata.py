@@ -87,6 +87,61 @@ ARTEFATO_MODELO_NUMERO = "279"
 ARTEFATO_MODELO_ANO = "2026"
 
 
+async def navegar_para_artefatos_digitais(page_area_trabalho):
+    """A partir de uma página já na Área de Trabalho, navega até a
+    listagem de Artefatos Digitais (.../comprasnet-artefatos-web/leitor-artefato)
+    clicando pela interface (o menu de módulos abre em uma aba NOVA,
+    não navega a mesma página).
+
+    Mecânica confirmada: o botão do avatar do usuário (canto superior
+    direito, classe `.br-sign-in`) abre um menu com ícones de módulos
+    (MentorIA, Pregão/Concorrência, Cotação/Dispensa, PGC, ETP,
+    Artefatos Digitais, Gestão de Riscos, IRP Digital...); clicar em
+    "Artefatos Digitais" abre a listagem numa aba nova.
+
+    Retorna a nova Page (aba) já na listagem."""
+    context = page_area_trabalho.context
+
+    # fecha qualquer seleção/menu residual antes de abrir o menu de módulos
+    await page_area_trabalho.mouse.click(50, 50)
+    await page_area_trabalho.wait_for_timeout(500)
+
+    gatilho = page_area_trabalho.locator(".br-sign-in").first
+    if await gatilho.count() == 0:
+        raise RuntimeError("Não achei o botão do avatar (.br-sign-in) na Área de Trabalho.")
+
+    await gatilho.click()
+    await page_area_trabalho.wait_for_timeout(1500)
+
+    item_artefatos = page_area_trabalho.get_by_text("Artefatos Digitais", exact=False).first
+    try:
+        await item_artefatos.wait_for(state="visible", timeout=8000)
+    except Exception:
+        raise RuntimeError("Cliquei no avatar mas 'Artefatos Digitais' não apareceu no menu de módulos.")
+
+    paginas_antes = set(context.pages)
+    await item_artefatos.click()
+
+    # a navegação abre uma aba NOVA — espera ela aparecer e carregar
+    nova_pagina = None
+    for _ in range(20):
+        await page_area_trabalho.wait_for_timeout(500)
+        novas = [p for p in context.pages if p not in paginas_antes]
+        if novas:
+            nova_pagina = novas[0]
+            break
+    if nova_pagina is None:
+        raise RuntimeError("Cliquei em 'Artefatos Digitais' mas nenhuma aba nova apareceu.")
+
+    try:
+        await nova_pagina.wait_for_url(re.compile(r"leitor-artefato"), timeout=15000)
+    except Exception:
+        pass  # segue mesmo assim — a URL pode já estar certa antes do evento disparar
+
+    await nova_pagina.wait_for_timeout(1500)
+    return nova_pagina
+
+
 # =========================================================
 # TERMO DE REFERÊNCIA (PDF) - Especificação + Unidade por item
 # =========================================================
