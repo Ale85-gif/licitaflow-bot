@@ -429,9 +429,14 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
       </div>
 
       <section class="panel" style="margin-top:18px">
-        <div class="head"><h2>Fluxo do processo</h2><span class="tag info mono" id="fluxoTag">—</span></div>
+        <div class="head">
+          <h2>Fluxo do processo</h2>
+          <span class="tag info mono" id="fluxoTag">—</span>
+          <button class="btn ghost" id="btnAnalisarFase" onclick="analisarFase()" style="margin-left:auto">Analisar fase</button>
+        </div>
         <div class="body">
           <div class="fluxo" id="fluxo"></div>
+          <div id="fluxoAtualizacao" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
         </div>
       </section>
     </section>
@@ -619,13 +624,16 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
    1. DADOS — trocar este bloco pelo JSON da sua planilha / API
    ======================================================================= */
 const HOJE = new Date();
-const FASES = ["Disputa","Julgamento","Habilitação","Fase recursal","Adjudicação","Homologação"];
+// As 6 fases exatamente como o Compras.gov.br mostra na tela de Seleção de
+// Fornecedores (div.step-item[aria-selected="true"]). Não inventar nomes
+// diferentes disso — é o texto oficial capturado pelo bot.
+const FASES = ["Disputa","Julgamento","Habilitação","Fase Recursal","Adjudicação / Homologação","Remanescentes"];
 
 const PREGOES = [
   {
     numero:"44/2026", objeto:"Material de expediente",
     fornecedores:[{nome:"Alfa Suprimentos Ltda.", cnpj:"12345678000199", cnpjFormatado:"12.345.678/0001-99"}],
-    fase:5, valor:184320.50, atualizado:"2026-08-27", ataVigencia:null, ataAssinada:false,
+    fase:"Adjudicação / Homologação", valor:184320.50, atualizado:"2026-08-27", ataVigencia:null, ataAssinada:false,
     itens:[
       {n:1,desc:"Papel A4 75g",status:"ok"},{n:2,desc:"Caneta esferográfica azul",status:"ok"},
       {n:3,desc:"Grampeador 26/6",status:"wait"},{n:4,desc:"Pasta suspensa",status:"ok"},
@@ -638,7 +646,7 @@ const PREGOES = [
   {
     numero:"31/2026", objeto:"Material de limpeza",
     fornecedores:[{nome:"Betta Distribuidora ME", cnpj:"23456789000188", cnpjFormatado:"23.456.789/0001-88"}],
-    fase:6, valor:97640.00, atualizado:"2026-08-19", ataVigencia:"2026-10-12", ataAssinada:true,
+    fase:"Adjudicação / Homologação", valor:97640.00, atualizado:"2026-08-19", ataVigencia:"2026-10-12", ataAssinada:true,
     itens:[
       {n:1,desc:"Detergente neutro 5L",status:"ok"},{n:2,desc:"Água sanitária 5L",status:"ok"},
       {n:3,desc:"Papel toalha",status:"ok"},{n:4,desc:"Saco de lixo 100L",status:"ok"},
@@ -655,7 +663,7 @@ const PREGOES = [
       {nome:"Sigma Distribuidora EIRELI", cnpj:"67890123000144", cnpjFormatado:"67.890.123/0001-44"},
       {nome:"Vetor Hardware Comércio Ltda.", cnpj:"78901234000133", cnpjFormatado:"78.901.234/0001-33"},
     ],
-    fase:5, valor:312880.90, atualizado:"2026-07-30", ataVigencia:null, ataAssinada:false,
+    fase:"Adjudicação / Homologação", valor:312880.90, atualizado:"2026-07-30", ataVigencia:null, ataAssinada:false,
     itens:[
       {n:1,desc:"SSD 480GB",status:"ok"},{n:2,desc:"Memória DDR4 8GB",status:"ok"},
       {n:3,desc:"Teclado ABNT2",status:"bad"},{n:4,desc:"Mouse óptico",status:"ok"},
@@ -670,7 +678,7 @@ const PREGOES = [
   {
     numero:"19/2026", objeto:"Gêneros alimentícios",
     fornecedores:[{nome:"Delta Alimentos Ltda.", cnpj:"89012345000122", cnpjFormatado:"89.012.345/0001-22"}],
-    fase:2, valor:76500.00, atualizado:"2026-08-28", ataVigencia:null, ataAssinada:false,
+    fase:"Julgamento", valor:76500.00, atualizado:"2026-08-28", ataVigencia:null, ataAssinada:false,
     itens:[
       {n:1,desc:"Arroz tipo 1 5kg",status:"wait"},{n:2,desc:"Feijão carioca 1kg",status:"wait"},
       {n:3,desc:"Óleo de soja 900ml",status:"wait"},{n:4,desc:"Açúcar refinado 1kg",status:"wait"},
@@ -680,7 +688,7 @@ const PREGOES = [
   {
     numero:"08/2026", objeto:"Manutenção predial",
     fornecedores:[{nome:"Épsilon Serviços Eireli", cnpj:"90123456000111", cnpjFormatado:"90.123.456/0001-11"}],
-    fase:6, valor:145200.00, atualizado:"2026-06-15", ataVigencia:"2027-06-14", ataAssinada:true,
+    fase:"Adjudicação / Homologação", valor:145200.00, atualizado:"2026-06-15", ataVigencia:"2027-06-14", ataAssinada:true,
     itens:[
       {n:1,desc:"Reparo hidráulico",status:"ok"},{n:2,desc:"Pintura interna m²",status:"ok"},
       {n:3,desc:"Troca de luminárias",status:"ok"},{n:4,desc:"Manutenção de forro",status:"ok"}
@@ -961,13 +969,74 @@ async function removerTR(numero){
 
 function renderFluxo(p){
   $("#fluxoTag").textContent = "Pregão " + p.numero;
+  // p.fase agora é o texto exato capturado do site (ou null/undefined se
+  // nunca foi lido, ou se a última leitura não encontrou o elemento — nesse
+  // caso nenhum passo fica marcado, em vez de reaproveitar uma fase antiga).
+  const faseAtual = FASES.indexOf(p.fase); // -1 se não bate com nenhuma fase conhecida
   $("#fluxo").innerHTML = FASES.map((f,idx) => {
     const n = idx + 1;
-    const cls = n < p.fase ? "done" : n === p.fase ? "now" : "";
-    const marca = n < p.fase ? "✓" : n;
+    const cls = faseAtual < 0 ? "" : (idx < faseAtual ? "done" : idx === faseAtual ? "now" : "");
+    const marca = faseAtual >= 0 && idx < faseAtual ? "✓" : n;
     return `<div class="fase ${cls}"><span class="dot">${marca}</span><span class="nm">${f}</span></div>`
          + (idx < FASES.length - 1 ? '<span class="conn"></span>' : "");
   }).join("");
+
+  const nota = $("#fluxoAtualizacao");
+  if (!p.faseCapturadaEm){
+    nota.textContent = "Fase ainda não verificada no Compras.gov.br.";
+  } else if (faseAtual < 0){
+    nota.textContent = `Fase não encontrada na última leitura (${fmtDataHora(p.faseCapturadaEm)}).`;
+  } else {
+    nota.textContent = `Última atualização da fase: ${fmtDataHora(p.faseCapturadaEm)}.`;
+  }
+}
+
+function fmtDataHora(isoStr){
+  try{ return new Date(isoStr).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}); }
+  catch(e){ return isoStr; }
+}
+
+function analisarFase(){
+  if (!BACKEND){
+    toast("Analisar fase só funciona com a API local rodando.", "bad");
+    return;
+  }
+  const b = $("#btnAnalisarFase");
+  b.disabled = true;
+  b.innerHTML = '<span class="spin"></span>Analisando...';
+
+  fetch("/api/fase/atualizar?pregao=" + encodeURIComponent(selecionado), {method:"POST"})
+    .then(r => r.json()).then(res => {
+      if (!res.ok){
+        toast(res.detalhe || "Não foi possível iniciar a análise.", "bad");
+        b.disabled = false; b.textContent = "Analisar fase";
+        return;
+      }
+      toast(res.detalhe || "Analisando fase...", "ok");
+      aguardarFase(b);
+    }).catch(() => {
+      toast("Falha ao chamar a análise de fase.", "bad");
+      b.disabled = false; b.textContent = "Analisar fase";
+    });
+}
+
+function aguardarFase(b){
+  const intervalo = setInterval(async () => {
+    let d;
+    try{
+      d = await (await fetch("/api/fase/status")).json();
+    }catch(e){
+      clearInterval(intervalo);
+      b.disabled = false; b.textContent = "Analisar fase";
+      return;
+    }
+    if (d.rodando) return;
+
+    clearInterval(intervalo);
+    toast("Análise de fase concluída.", "ok");
+    await detectarBackend();
+    b.disabled = false; b.textContent = "Analisar fase";
+  }, 3000);
 }
 
 let ordenacaoTabela = {campo:null, dir:1};
@@ -999,7 +1068,7 @@ function renderTabela(){
       <td class="num">${homologados(p)}/${p.itens.length}</td>
       <td class="num" style="color:${pendentes(p).length ? "var(--rust)" : "var(--muted)"}">
         ${pendentes(p).length ? pendentes(p).map(i => i.n).join(", ") : "—"}</td>
-      <td>${FASES[p.fase - 1]}</td>
+      <td>${p.fase ? esc(p.fase) : '<span style="color:var(--muted)">Fase não encontrada</span>'}</td>
       <td><span class="tag ${s.classe}">${s.texto}</span></td>
     </tr>`;
   }).join("") : `<tr><td colspan="7" class="empty">Nenhum pregão encontrado${q ? ` para "${esc(q)}"` : ""}.</td></tr>`;

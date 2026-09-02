@@ -24,11 +24,7 @@ from comum import fechar_chrome_automacao
 # =========================================================
 
 PASTA = Path(__file__).resolve().parent
-# Fixo (nao sys.executable): o .venv fica fora do OneDrive (C:\venvs\...) para
-# nao ser corrompido pela sincronizacao em tempo real durante pip install, e
-# para o Agendador de Tarefas sempre chamar o Python certo, seja qual for o
-# interpretador que iniciou este script.
-PYTHON = r"C:\venvs\meu_projeto_python\Scripts\python.exe"
+PYTHON = sys.executable
 
 BOT_GERENCIADOR = PASTA / "Bot comprasnet rapido.py"
 BOT_PARTICIPACAO = PASTA / "bot_participante.py"

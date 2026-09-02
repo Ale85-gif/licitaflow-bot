@@ -1,0 +1,16 @@
+{
+  "53665245000102": [
+    {
+      "em": "2026-09-01T10:39:20.815255",
+      "status": "CONSULTA INCOMPLETA",
+      "fontes": {
+        "CEIS": "erro",
+        "CNEP": "erro",
+        "SICAF": "nao_consultado",
+        "PNCP": "nao_consultado"
+      },
+      "pregao": "90001/2025",
+      "razaoSocial": "CARINA MACHADO ALMASAN"
+    }
+  ]
+}

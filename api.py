@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 from datetime import date, datetime
 from pathlib import Path
@@ -62,9 +63,12 @@ TTL_CACHE_SEGUNDOS = 120
 PYTHON_VENV = r"C:\venvs\meu_projeto_python\Scripts\python.exe"
 BOT_COLETA = RAIZ / "Bot comprasnet rapido.py"
 ABRIR_LICITAFLOW = RAIZ / "abrir_licitaflow.py"
+CAPTURAR_FASE = RAIZ / "capturar_fase.py"
 COLETA_LOG = RAIZ / "logs" / "coleta_painel.log"
 CONECTAR_LOG = RAIZ / "logs" / "conectar_painel.log"
+FASE_LOG = RAIZ / "logs" / "fase_painel.log"
 CDP_URL = "http://127.0.0.1:9222/json/version"
+DB_PATH = RAIZ / "dados.db"
 
 app = FastAPI(title="LicitaFlow")
 
@@ -189,7 +193,9 @@ def _carregar_pregoes() -> list[dict]:
                 }
                 for nome, documento in sorted(fornecedores.items())
             ],
-            "fase": 6,
+            # "fase" NÃO entra aqui mais (era um valor fixo/inventado). Quem
+            # preenche é _status(), a partir da tabela pregoes_fase real
+            # (ver capturar_fase.py — Etapa 2.5).
             "valor": round(valor_total, 2),
             "ataVigencia": min(vig_fins) if vig_fins else None,
             "ataAssinada": True,
@@ -233,6 +239,24 @@ def _salvar_atas_geradas(indice: dict) -> None:
     ATAS_GERADAS_ARQUIVO.write_text(json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _carregar_fases() -> dict[str, dict]:
+    """Lê a tabela `pregoes_fase` (gravada por capturar_fase.py — Etapa 2.5).
+    Só leitura, tabela própria, não mexe em nada que os outros bots usam."""
+    if not DB_PATH.exists():
+        return {}
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.execute(
+            "SELECT pregao, fase, encontrado, motivo, atualizado_em FROM pregoes_fase"
+        )
+        return {r["pregao"]: dict(r) for r in cur.fetchall()}
+    except sqlite3.OperationalError:
+        return {}  # tabela ainda não existe (nenhuma captura rodou ainda)
+    finally:
+        conn.close()
+
+
 def _status() -> dict:
     agora = datetime.now()
     cache_velho = not _cache["em"] or (agora - _cache["em"]).total_seconds() > TTL_CACHE_SEGUNDOS
@@ -242,9 +266,20 @@ def _status() -> dict:
 
     anexos = _carregar_anexos()
     atas_geradas = _carregar_atas_geradas()
+    fases = _carregar_fases()
     for p in _cache["pregoes"]:
         p["anexo"] = anexos.get(p["numero"])
         p["atasGeradas"] = atas_geradas.get(p["numero"], [])
+
+        info_fase = fases.get(p["numero"])
+        if info_fase:
+            p["fase"] = info_fase["fase"]  # None se a última leitura não encontrou
+            p["faseCapturadaEm"] = info_fase["atualizado_em"]
+            p["faseMotivo"] = info_fase["motivo"]
+        else:
+            p["fase"] = None
+            p["faseCapturadaEm"] = None
+            p["faseMotivo"] = None
 
     return {
         "sessao": {
@@ -513,6 +548,51 @@ def coletar_status():
         "rodando": rodando,
         "iniciado": True,
         "codigo_saida": None if rodando else _coleta_processo.returncode,
+    }
+
+
+# ── Etapa 2.5: captura da FASE real (capturar_fase.py) ──────────────────────
+
+_fase_processo: Optional[subprocess.Popen] = None
+
+
+@app.post("/api/fase/atualizar")
+def atualizar_fase(pregao: str):
+    """Dispara capturar_fase.py para UM pregão específico ('Analisar Pregão').
+    Não mexe em fornecedores/itens/homologação — só a fase."""
+    global _fase_processo
+
+    if _fase_processo is not None and _fase_processo.poll() is None:
+        return {"ok": False, "detalhe": "Já tem uma verificação de fase rodando. Aguarde terminar."}
+
+    if not _chrome_debug_ativo():
+        return {"ok": False, "detalhe": "Chrome da automação não está aberto. Clique em 'Conectar' primeiro."}
+
+    FASE_LOG.parent.mkdir(exist_ok=True)
+    log_arquivo = open(FASE_LOG, "w", encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+    _fase_processo = subprocess.Popen(
+        [PYTHON_VENV, str(CAPTURAR_FASE), pregao],
+        cwd=str(RAIZ),
+        stdout=log_arquivo,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+
+    return {"ok": True, "detalhe": f"Verificando fase do pregão {pregao}..."}
+
+
+@app.get("/api/fase/status")
+def fase_status():
+    if _fase_processo is None:
+        return {"rodando": False, "iniciado": False}
+
+    rodando = _fase_processo.poll() is None
+    return {
+        "rodando": rodando,
+        "iniciado": True,
+        "codigo_saida": None if rodando else _fase_processo.returncode,
     }
 
 
