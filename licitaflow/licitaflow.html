@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LicitaFlow — acompanhamento de pregões e atas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1C1D20;
+  --paper:#F3F2F0;
+  --surface:#FFFFFF;
+  --line:#DDDBD7;
+  --muted:#6E6B66;
+
+  --accent:#A85C36;
+  --accent-dark:#8C4A2A;
+  --accent-soft:#F6E9E1;
+
+  --olive:#3F7D5C;
+  --olive-dark:#2E5F45;
+  --olive-soft:#E2EFE8;
+
+  --amber:#7A5312;
+  --amber-soft:#F8EEDA;
+  --rust:#AF4436;
+  --rust-soft:#F8E5E1;
+  --slate-soft:#E4E7EA;
+  --slate:#4A5C6B;
+  --radius:10px;
+  --shadow:0 1px 2px #1c1d2010, 0 6px 18px #1c1d200d;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,Arial,sans-serif;
+  font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace}
+h1,h2,h3{margin:0;letter-spacing:-.01em}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ---------- layout ---------- */
+.app{display:flex;min-height:100vh}
+.side{
+  width:236px;flex-shrink:0;background:var(--ink);color:#DEDCD8;
+  padding:22px 14px;display:flex;flex-direction:column;gap:4px;
+  position:sticky;top:0;height:100vh;
+}
+.brand{padding:0 8px 20px;border-bottom:1px solid #ffffff1a;margin-bottom:16px}
+.brand .word{font-size:21px;font-weight:700;letter-spacing:-.02em;color:#fff}
+.brand .word em{font-style:normal;color:#D9855A}
+.brand .org{font-size:11px;color:#8B8781;margin-top:6px;letter-spacing:.06em;text-transform:uppercase}
+.nav{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  width:100%;text-align:left;padding:10px 12px;border-radius:8px;color:#B6B2AC;font-size:14px;
+}
+.nav:hover{background:#ffffff12;color:#fff}
+.nav[aria-current="page"]{background:var(--accent);color:#fff;font-weight:600}
+.nav .count{font-size:11px;padding:1px 7px;border-radius:99px;background:#ffffff22;color:#fff}
+.side .foot{margin-top:auto;font-size:11px;color:#7C7873;padding:0 8px;line-height:1.6}
+
+.main{flex:1;min-width:0;padding:26px 30px 60px;max-width:1440px;margin:0 auto;width:100%}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+/* ---------- hero ---------- */
+.hero{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:24px 26px;margin-bottom:18px;box-shadow:var(--shadow);
+  display:flex;gap:30px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;
+}
+.hero .thesis{max-width:560px}
+.hero h1{font-size:29px;line-height:1.2;margin:10px 0 8px;font-weight:600}
+.hero h1 b{color:var(--rust);font-weight:600}
+.hero p{margin:0;color:var(--muted);font-size:14px;max-width:52ch}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr));gap:22px}
+.stat .n{font-size:24px;font-weight:600;font-family:"IBM Plex Mono",monospace}
+.stat .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-top:2px}
+.stat.alert .n{color:var(--rust)}
+
+/* ---------- panels ---------- */
+.grid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.panel .head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.panel h2{font-size:15px;font-weight:600}
+.panel .body{padding:16px 20px}
+.panel .body.tight{padding:6px 20px 12px}
+
+.search{display:flex;gap:8px;padding:14px 20px 4px}
+.search input{
+  flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+  font:inherit;background:#FBFAF9;
+}
+.search input::placeholder{color:#98948E}
+
+.item-row{
+  display:flex;width:100%;gap:12px;align-items:center;justify-content:space-between;
+  padding:13px 20px;border-bottom:1px solid #EAE8E5;text-align:left;
+}
+.item-row:last-child{border-bottom:0}
+.item-row:hover{background:#F7F6F4}
+.item-row[aria-selected="true"]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.item-row .t{font-weight:600;font-size:14.5px}
+.item-row .s{font-size:12.5px;color:var(--muted);margin-top:3px}
+.empty{padding:26px 20px;color:var(--muted);font-size:14px;text-align:center}
+
+.tag{padding:4px 9px;border-radius:6px;font-size:11.5px;font-weight:600;white-space:nowrap;letter-spacing:.01em}
+.tag.ok{background:var(--olive-soft);color:var(--olive-dark)}
+.tag.wait{background:var(--amber-soft);color:var(--amber)}
+.tag.bad{background:var(--rust-soft);color:var(--rust)}
+.tag.info{background:var(--slate-soft);color:var(--slate)}
+.tag.erro{background:#FCE8D5;color:#8A4B12}
+
+/* ---------- mapa de itens (signature) ---------- */
+.mapa{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px}
+.chip{
+  width:38px;height:38px;border-radius:7px;display:grid;place-items:center;
+  font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;
+  border:1px solid transparent;transition:transform .12s ease;
+}
+.chip:hover{transform:translateY(-2px)}
+.chip.ok{background:var(--olive);color:#fff}
+.chip.wait{background:var(--amber-soft);color:var(--amber);border-color:#E8D4A8}
+.chip.bad{background:var(--rust-soft);color:var(--rust);border-color:#EFC9C1}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px;flex-wrap:wrap}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px}
+
+.progress{height:8px;background:#E6E3DF;border-radius:99px;overflow:hidden;margin:10px 0 6px}
+.progress .bar{height:100%;background:var(--olive);transition:width .3s ease}
+
+.kv{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid #EAE8E5;font-size:14px}
+.kv:last-child{border-bottom:0}
+.kv span{color:var(--muted)}
+.kv b{font-weight:600;text-align:right}
+
+.lock{
+  display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:8px;
+  font-size:13.5px;margin-top:14px;line-height:1.45;
+}
+.lock.bad{background:var(--rust-soft);color:#8A3428}
+.lock.ok{background:var(--olive-soft);color:var(--olive-dark)}
+.lock.wait{background:var(--amber-soft);color:#7A5312}
+
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.btn{padding:10px 15px;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;font-size:14px}
+.btn:hover{background:var(--accent-dark)}
+.btn.ghost{background:#F1EFEC;color:var(--ink);border:1px solid var(--line)}
+.btn.ghost:hover{background:#E7E4E0}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+/* ---------- fluxo ---------- */
+.fluxo{display:flex;align-items:center;gap:0;flex-wrap:wrap;margin-top:4px}
+.fase{display:flex;align-items:center;gap:9px;padding-right:6px}
+.dot{
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;font-weight:600;background:#E6E3DF;color:var(--muted);
+  font-family:"IBM Plex Mono",monospace;flex-shrink:0;
+}
+.fase.done .dot{background:var(--olive);color:#fff}
+.fase.now .dot{background:var(--ink);color:#fff}
+.fase .nm{font-size:13px;color:var(--muted)}
+.fase.done .nm,.fase.now .nm{color:var(--ink);font-weight:600}
+.conn{height:1px;background:var(--line);flex:1;min-width:18px;margin:0 8px}
+
+/* ---------- tabela ---------- */
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{
+  text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;
+}
+td{padding:12px;border-bottom:1px solid #EAE8E5;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.num{font-family:"IBM Plex Mono",monospace;font-size:13.5px}
+
+/* ---------- alertas ---------- */
+.alerta{display:flex;gap:14px;padding:14px 20px;border-bottom:1px solid #EAE8E5;align-items:flex-start}
+.alerta:last-child{border-bottom:0}
+.alerta .mark{width:6px;align-self:stretch;border-radius:99px;flex-shrink:0}
+.alerta.crit .mark{background:var(--rust)}
+.alerta.warn .mark{background:var(--amber)}
+.alerta.info .mark{background:var(--slate)}
+.alerta .t{font-weight:600;font-size:14.5px;display:block}
+.alerta .d{font-size:13px;color:var(--muted);margin-top:3px;display:block}
+
+/* ---------- frescor dos dados (topo do Painel) ---------- */
+.frescor-pill{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+  color:var(--olive-dark);background:var(--olive-soft);padding:3px 9px;border-radius:99px;
+  text-transform:none;letter-spacing:0;
+}
+.dot-fresh{width:6px;height:6px;border-radius:50%;background:var(--olive);display:inline-block;flex-shrink:0}
+
+/* ---------- banner de sessão expirada ---------- */
+.banner-alerta{
+  display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+  background:var(--rust-soft);color:#8A3428;border:1px solid #EFC9C1;border-radius:var(--radius);
+  padding:12px 16px;margin-bottom:14px;font-size:13.5px;
+}
+.banner-alerta[hidden]{display:none}
+.banner-alerta b{font-weight:700}
+.banner-alerta .btn{padding:7px 12px;font-size:13px;background:var(--rust);flex-shrink:0}
+.banner-alerta .btn:hover{background:#8A3428}
+.nav .count.alert{background:var(--rust);color:#fff}
+
+/* ---------- resumo número+rótulo repetido nas telas ---------- */
+.mini-stats{display:flex;gap:22px;flex-wrap:wrap;margin:2px 0 18px}
+
+/* ---------- fornecedores: resumo com expansão ---------- */
+.forn-details summary{
+  cursor:pointer;color:var(--accent);list-style:none;display:inline;
+}
+.forn-details summary::-webkit-details-marker{display:none}
+.forn-details summary:hover{text-decoration:underline}
+.forn-details[open] summary{display:block;margin-bottom:4px;color:var(--muted)}
+.forn-details .lista-completa{font-size:13px;line-height:1.7}
+
+/* ---------- alertas agrupados por urgência ---------- */
+.alerta-grupo:not(:last-child){border-bottom:1px solid var(--line)}
+.alerta-grupo-titulo{
+  display:flex;align-items:center;gap:8px;padding:12px 20px 6px;
+  font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);background:#FAF9F7;
+}
+.alerta-grupo-titulo .count{
+  font-size:11px;padding:1px 7px;border-radius:99px;background:var(--slate-soft);
+  color:var(--slate);font-weight:600;text-transform:none;letter-spacing:0;
+}
+
+/* ---------- tabela: busca, ordenação, rolagem interna ---------- */
+.head-search{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.head-search input{
+  padding:8px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;
+  background:#FBFAF9;font-size:13.5px;width:220px;max-width:100%;
+}
+.tabela-scroll{max-height:520px;overflow-y:auto}
+.tabela-scroll thead th{position:sticky;top:0;background:var(--surface);z-index:1}
+th.ordenavel{cursor:pointer;user-select:none}
+th.ordenavel:hover{color:var(--ink)}
+th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
+
+/* ---------- mapa de itens: reforço além da cor ---------- */
+.chip{position:relative}
+.chip::after{
+  position:absolute;bottom:-4px;right:-4px;width:14px;height:14px;border-radius:50%;
+  font-size:9px;line-height:1;display:grid;place-items:center;color:#fff;
+  border:1.5px solid var(--surface);
+}
+.chip.ok::after{content:"✓";background:var(--olive-dark)}
+.chip.wait::after{content:"!";background:var(--amber)}
+.chip.bad::after{content:"×";background:var(--rust);font-size:10px}
+.legend-hint{font-size:12px;color:var(--muted);margin-top:2px}
+.chip.coberto{opacity:.4}
+.chip.selecionado{outline:2px solid var(--accent);outline-offset:2px}
+.selecao-barra{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:var(--accent-soft);border:1px solid #E8CBB8;border-radius:8px;
+  padding:10px 14px;margin-top:8px;font-size:13.5px;
+}
+.atas-geradas-lista{margin-top:10px;font-size:13px}
+.atas-geradas-lista .item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #EAE8E5}
+.atas-geradas-lista .item:last-child{border-bottom:0}
+
+/* ---------- modal ---------- */
+.modal{position:fixed;inset:0;background:#1c1d20b3;display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
+.modal.open{display:flex}
+.box{background:var(--surface);width:min(560px,100%);border-radius:12px;padding:24px;max-height:88vh;overflow:auto;box-shadow:0 20px 50px #0006}
+.box h2{font-size:19px;margin-bottom:6px}
+.field{margin:14px 0}
+.field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px}
+.field input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#FBFAF9}
+.field .hint{font-size:12px;color:var(--muted);margin-top:5px}
+.field.err input{border-color:var(--rust);background:#FDF6F4}
+.field.err .hint{color:var(--rust)}
+
+/* ---------- toast ---------- */
+.toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:60}
+.toast{
+  background:var(--ink);color:#fff;padding:12px 16px;border-radius:9px;font-size:13.5px;
+  max-width:340px;box-shadow:0 8px 24px #0003;animation:rise .2s ease;
+}
+.toast.ok{background:var(--olive-dark)}
+.toast.bad{background:var(--rust)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* ---------- login ---------- */
+.gate{position:fixed;inset:0;background:var(--ink);display:grid;place-items:center;padding:20px;z-index:80}
+.gate[hidden]{display:none}
+.gate .card{background:var(--surface);width:min(400px,100%);border-radius:14px;padding:30px;box-shadow:0 24px 60px #0005}
+.gate .word{font-size:24px;font-weight:700;letter-spacing:-.02em}
+.gate .word em{font-style:normal;color:var(--accent)}
+.gate .org{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:6px 0 22px}
+.gate .btn{width:100%;justify-content:center;text-align:center;margin-top:6px}
+.gate .aviso{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.5;border-top:1px solid var(--line);padding-top:14px}
+
+/* ---------- sessão ---------- */
+.sessao{display:flex;gap:14px;align-items:center;padding:16px 20px;border-radius:10px;border:1px solid var(--line)}
+.sessao.ok{background:var(--olive-soft);border-color:#BFDACB}
+.sessao.exp{background:var(--rust-soft);border-color:#EFC9C1}
+.pulse{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.sessao.ok .pulse{background:var(--olive);box-shadow:0 0 0 4px #3f7d5c26}
+.sessao.exp .pulse{background:var(--rust);box-shadow:0 0 0 4px #af443626}
+.log{font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.9;color:var(--muted)}
+.log b{color:var(--ink);font-weight:500}
+.passo{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid #EAE8E5;font-size:13.5px}
+.passo:last-child{border-bottom:0}
+.passo .n{font-family:"IBM Plex Mono",monospace;color:var(--accent);font-weight:600;flex-shrink:0}
+
+.view[hidden]{display:none}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid #ffffff55;border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- responsivo ---------- */
+@media(max-width:1040px){
+  .grid{grid-template-columns:1fr}
+  .hero{gap:20px}
+  .stats{grid-template-columns:repeat(4,1fr);width:100%}
+}
+@media(max-width:720px){
+  .app{flex-direction:column}
+  .side{width:100%;height:auto;position:static;flex-direction:row;overflow-x:auto;padding:12px;gap:6px;align-items:center}
+  .brand{border:0;padding:0 12px 0 4px;margin:0;flex-shrink:0}
+  .brand .org{display:none}
+  .side .foot{display:none}
+  .nav{width:auto;white-space:nowrap;padding:9px 12px}
+  .main{padding:18px 16px 50px}
+  .hero h1{font-size:23px}
+  .stats{grid-template-columns:repeat(2,1fr);gap:16px}
+  table{font-size:13px}
+}
+
+@media print{
+  .side,.search,.actions,.btn,.toasts{display:none!important}
+  body{background:#fff}
+  .panel,.hero{box-shadow:none;border-color:#CFCCC7;break-inside:avoid}
+  .main{padding:0;max-width:none}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<div class="gate" id="gate">
+  <div class="card">
+    <div class="word">Licita<em>Flow</em></div>
+    <div class="org">Prefeitura Militar de Brasília · UASG 160082</div>
+
+    <div class="field">
+      <label for="gUser">Usuário</label>
+      <input id="gUser" value="alesson" autocomplete="username">
+    </div>
+    <div class="field" id="gCampoSenha">
+      <label for="gSenha">Senha</label>
+      <input id="gSenha" type="password" autocomplete="current-password"
+             onkeydown="if(event.key==='Enter')entrar()">
+      <div class="hint" id="gHint">Acesso ao painel. Não é a sua senha do gov.br.</div>
+    </div>
+    <button class="btn" onclick="entrar()">Entrar</button>
+
+    <div class="aviso">
+      A coleta usa a sessão do Compras.gov.br aberta no seu computador.
+      Se ela estiver expirada, o painel pede para reconectar — a senha do gov.br
+      é digitada só no site oficial, nunca aqui.
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- ================= NAV ================= -->
+  <aside class="side">
+    <div class="brand">
+      <div class="word">Licita<em>Flow</em></div>
+      <div class="org">PMB · UASG 160082</div>
+    </div>
+    <button class="nav" data-view="painel" aria-current="page">Painel</button>
+    <button class="nav" data-view="pregoes">Pregões <span class="count" id="navPregoes">0</span></button>
+    <button class="nav" data-view="atas">Atas</button>
+    <button class="nav" data-view="alertas">Alertas <span class="count" id="navAlertas">0</span></button>
+    <button class="nav" data-view="empresas">Empresas</button>
+    <button class="nav" data-view="conexao">Conexão <span class="count" id="navSessao">•</span></button>
+    <div class="foot"><span id="footFonte">Dados de demonstração.</span><br>Atualizado em <span class="mono" id="footData"></span></div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ================= PAINEL ================= -->
+    <section class="view" id="view-painel">
+      <div class="banner-alerta" id="bannerSessao" hidden>
+        <span><b>Sessão do Compras.gov.br expirada.</b> A coleta parou de atualizar os dados.</span>
+        <button class="btn" onclick="trocarView('conexao')">Reconectar</button>
+      </div>
+
+      <div class="hero">
+        <div class="thesis">
+          <div class="eyebrow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span>Situação das atas</span>
+            <span class="frescor-pill" id="frescorPill"><i class="dot-fresh"></i><span id="frescorTexto">Atualizado agora</span></span>
+          </div>
+          <h1 id="heroTitle">—</h1>
+          <p>A ata só é liberada quando <b>todos</b> os itens do fornecedor são homologados. O painel mostra exatamente quais itens estão travando cada processo.</p>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n" id="stPregoes">0</div><div class="l">Pregões</div></div>
+          <div class="stat"><div class="n" id="stHomologados">0</div><div class="l">Itens homologados</div></div>
+          <div class="stat alert"><div class="n" id="stPendentes">0</div><div class="l">Itens pendentes</div></div>
+          <div class="stat"><div class="n" id="stAtas">0</div><div class="l">Atas liberadas</div></div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="head">
+            <h2>Pregões em acompanhamento</h2>
+            <button class="btn" onclick="abrirModal()">+ Acompanhar pregão</button>
+          </div>
+          <div class="search">
+            <input id="filtro" type="search" placeholder="Filtrar por número, objeto ou fornecedor..."
+                   aria-label="Filtrar pregões" oninput="renderLista()">
+          </div>
+          <div id="lista" role="listbox" aria-label="Pregões"></div>
+        </section>
+
+        <section class="panel" id="detalhe" aria-live="polite"></section>
+      </div>
+
+      <section class="panel" style="margin-top:18px">
+        <div class="head"><h2>Fluxo do processo</h2><span class="tag info mono" id="fluxoTag">—</span></div>
+        <div class="body">
+          <div class="fluxo" id="fluxo"></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ================= PREGÕES ================= -->
+    <section class="view" id="view-pregoes" hidden>
+      <div class="eyebrow">Consolidado</div>
+      <h1 style="font-size:26px;margin:8px 0 10px;font-weight:600">Todos os pregões</h1>
+      <div class="mini-stats" id="statsPregoes"></div>
+      <section class="panel">
+        <div class="head">
+          <h2>Itens por pregão</h2>
+          <div class="head-search">
+            <input id="filtroTabela" type="search" placeholder="Buscar por número, objeto ou fornecedor..."
+                   aria-label="Buscar pregões" oninput="renderTabela()">
+            <button class="btn ghost" onclick="baixarCSV()">Baixar pendentes (CSV)</button>
+          </div>
+        </div>
+        <div class="body tight" style="overflow-x:auto">
+          <div class="tabela-scroll">
+            <table>
+              <thead><tr>
+                <th>Pregão</th><th>Objeto</th><th>Fornecedor</th><th>Itens</th>
+                <th class="ordenavel" onclick="ordenarTabela('pendentes')">Pendentes <span class="seta" id="setaPendentes"></span></th>
+                <th>Fase</th><th>Ata</th>
+              </tr></thead>
+              <tbody id="tabela"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ================= ATAS ================= -->
+    <section class="view" id="view-atas" hidden>
+      <div class="eyebrow">Vigência</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:8px 0 10px">
+        <h1 style="font-size:26px;margin:0;font-weight:600">Atas de registro de preços</h1>
+        <select id="ordAtas" onchange="renderAtas()" aria-label="Ordenar atas"
+                style="padding:8px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#FBFAF9;font-size:13.5px">
+          <option value="vencimento">Ordenar por vencimento</option>
+          <option value="numero">Ordenar por número</option>
+          <option value="valor">Ordenar por valor</option>
+        </select>
+      </div>
+      <div class="mini-stats" id="statsAtas"></div>
+      <div id="atas" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px"></div>
+    </section>
+
+    <!-- ================= ALERTAS ================= -->
+    <section class="view" id="view-alertas" hidden>
+      <div class="eyebrow">Prioridades</div>
+      <h1 style="font-size:26px;margin:8px 0 10px;font-weight:600">Alertas</h1>
+      <div class="mini-stats" id="statsAlertas"></div>
+      <section class="panel"><div id="alertas"></div></section>
+    </section>
+
+    <!-- ================= EMPRESAS ================= -->
+    <section class="view" id="view-empresas" hidden>
+      <div class="eyebrow">Fornecedores</div>
+      <h1 style="font-size:26px;margin:8px 0 18px;font-weight:600">Verificação de empresas</h1>
+
+      <section class="panel">
+        <div class="head"><h2>Consultar CNPJ</h2></div>
+        <div class="body">
+          <div class="field" style="margin:0 0 14px">
+            <label for="empCnpj">CNPJ da empresa</label>
+            <input id="empCnpj" class="mono" placeholder="00.000.000/0000-00" inputmode="numeric"
+                   onkeydown="if(event.key==='Enter')verificarEmpresa()">
+          </div>
+          <div class="actions" style="margin-top:0">
+            <button class="btn" id="btnVerificarEmpresa" onclick="verificarEmpresa()">🔎 Verificar empresa</button>
+            <button class="btn ghost" id="btnHistoricoEmpresa" onclick="verHistoricoEmpresa()" disabled>📜 Histórico</button>
+            <button class="btn ghost" id="btnRelatorioEmpresa" onclick="gerarRelatorioEmpresa()" disabled>📄 Gerar relatório</button>
+          </div>
+          <p class="legend-hint" style="margin-top:12px">
+            Consulta o CEIS e o CNEP (Portal da Transparência) e cruza com o PNCP.
+            O SICAF não tem API pública — a consulta fica disponível como link oficial,
+            nunca como resultado automático.
+          </p>
+        </div>
+      </section>
+
+      <div id="empResultadoCard" style="margin-top:18px" hidden></div>
+
+      <section class="panel" style="margin-top:18px" id="painelHistoricoEmpresa" hidden>
+        <div class="head"><h2>Histórico de consultas</h2></div>
+        <div class="body tight" style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Data</th><th>Pregão</th><th>Resultado</th><th>CEIS</th><th>CNEP</th><th>SICAF</th><th>PNCP</th></tr></thead>
+            <tbody id="empHistoricoTabela"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:18px" id="painelRelatorioEmpresa" hidden>
+        <div class="head"><h2>Relatório de verificação</h2></div>
+        <div class="body" id="empRelatorioTexto"></div>
+      </section>
+    </section>
+
+    <!-- ================= CONEXÃO ================= -->
+    <section class="view" id="view-conexao" hidden>
+      <div class="eyebrow">Coleta de dados</div>
+      <h1 style="font-size:26px;margin:8px 0 18px;font-weight:600">Conexão com o Compras.gov.br</h1>
+
+      <div class="grid">
+        <section class="panel">
+          <div class="head"><h2>Sessão</h2><span class="tag info mono" id="tagFonte">demonstração</span></div>
+          <div class="body">
+            <div id="cardSessao"></div>
+
+            <div class="actions">
+              <button class="btn" id="btnConectar" onclick="conectar()">Conectar ao Compras.gov.br</button>
+              <button class="btn ghost" id="btnColeta" onclick="rodarColeta()">Rodar coleta agora</button>
+            </div>
+
+            <div class="eyebrow" style="margin-top:22px">Como funciona a conexão</div>
+            <div class="passo"><span class="n">1</span><span>O painel abre uma janela do navegador já no login do gov.br.</span></div>
+            <div class="passo"><span class="n">2</span><span>Você entra normalmente, inclusive com o segundo fator.</span></div>
+            <div class="passo"><span class="n">3</span><span>Ao detectar o login, o robô salva a sessão em <span class="mono">estado_compras.json</span> e fecha a janela.</span></div>
+            <div class="passo"><span class="n">4</span><span>As coletas seguintes reaproveitam essa sessão até ela expirar — sem novo login.</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="head"><h2>Últimas coletas</h2></div>
+          <div class="body"><div class="log" id="logColetas"></div></div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:18px">
+        <div class="head"><h2>Fontes de dados</h2></div>
+        <div class="body tight" style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Fonte</th><th>Precisa de login</th><th>O que entrega</th></tr></thead>
+            <tbody>
+              <tr><td><b>PNCP</b> <span class="mono" style="font-size:12px;color:var(--muted)">/api/consulta</span></td>
+                  <td><span class="tag ok">Não</span></td><td>Editais, atas publicadas, itens e resultados</td></tr>
+              <tr><td><b>Dados Abertos Compras</b> <span class="mono" style="font-size:12px;color:var(--muted)">dadosabertos.compras.gov.br</span></td>
+                  <td><span class="tag ok">Não</span></td><td>Licitações, itens, CATMAT/CATSER, fornecedores</td></tr>
+              <tr><td><b>Compras.gov.br</b> (área logada)</td>
+                  <td><span class="tag bad">Sim</span></td><td>Artefatos/TR, homologação item a item, atas da sua UASG</td></tr>
+              <tr><td><b>Contratos.gov.br</b></td>
+                  <td><span class="tag bad">Sim</span></td><td>Empenhos e execução das atas</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+  </main>
+</div>
+
+<!-- ================= MODAL ================= -->
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
+  <div class="box">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <h2 id="modalTitulo">Acompanhar pregão</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:4px 0 0">Informe o número do artefato para localizar o Termo de Referência.</p>
+      </div>
+      <button class="btn ghost" onclick="fecharModal()">Fechar</button>
+    </div>
+
+    <div class="field">
+      <label for="uasg">UASG</label>
+      <input id="uasg" class="mono" value="160082" inputmode="numeric">
+    </div>
+    <div class="field" id="fArtefato">
+      <label for="artefato">Número do artefato</label>
+      <input id="artefato" class="mono" placeholder="Ex.: 123456" inputmode="numeric"
+             onkeydown="if(event.key==='Enter')pesquisar()">
+      <div class="hint" id="hintArtefato">Somente números, como aparece no Compras.gov.br.</div>
+    </div>
+    <button class="btn" id="btnBuscar" onclick="pesquisar()">Pesquisar artefato</button>
+    <div id="resultado" style="margin-top:16px"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script>
+/* =======================================================================
+   1. DADOS — trocar este bloco pelo JSON da sua planilha / API
+   ======================================================================= */
+const HOJE = new Date();
+const FASES = ["Disputa","Julgamento","Habilitação","Fase recursal","Adjudicação","Homologação"];
+
+const PREGOES = [
+  {
+    numero:"44/2026", objeto:"Material de expediente",
+    fornecedores:[{nome:"Alfa Suprimentos Ltda.", cnpj:"12345678000199", cnpjFormatado:"12.345.678/0001-99"}],
+    fase:5, valor:184320.50, atualizado:"2026-08-27", ataVigencia:null, ataAssinada:false,
+    itens:[
+      {n:1,desc:"Papel A4 75g",status:"ok"},{n:2,desc:"Caneta esferográfica azul",status:"ok"},
+      {n:3,desc:"Grampeador 26/6",status:"wait"},{n:4,desc:"Pasta suspensa",status:"ok"},
+      {n:5,desc:"Bloco autoadesivo",status:"ok"},{n:6,desc:"Clipe nº 8",status:"ok"},
+      {n:7,desc:"Tesoura 21cm",status:"wait"},{n:8,desc:"Fita adesiva",status:"ok"},
+      {n:9,desc:"Envelope ofício",status:"wait"},{n:10,desc:"Marcador permanente",status:"ok"},
+      {n:11,desc:"Corretivo em fita",status:"ok"},{n:12,desc:"Pasta catálogo",status:"wait"}
+    ]
+  },
+  {
+    numero:"31/2026", objeto:"Material de limpeza",
+    fornecedores:[{nome:"Betta Distribuidora ME", cnpj:"23456789000188", cnpjFormatado:"23.456.789/0001-88"}],
+    fase:6, valor:97640.00, atualizado:"2026-08-19", ataVigencia:"2026-10-12", ataAssinada:true,
+    itens:[
+      {n:1,desc:"Detergente neutro 5L",status:"ok"},{n:2,desc:"Água sanitária 5L",status:"ok"},
+      {n:3,desc:"Papel toalha",status:"ok"},{n:4,desc:"Saco de lixo 100L",status:"ok"},
+      {n:5,desc:"Desinfetante 5L",status:"ok"},{n:6,desc:"Vassoura piaçava",status:"ok"},
+      {n:7,desc:"Rodo 60cm",status:"ok"},{n:8,desc:"Pano multiuso",status:"ok"}
+    ]
+  },
+  {
+    numero:"27/2026", objeto:"Peças e acessórios de informática",
+    fornecedores:[
+      {nome:"Gama Tecnologia S/A", cnpj:"34567890000177", cnpjFormatado:"34.567.890/0001-77"},
+      {nome:"Delta Peças Ltda.", cnpj:"45678901000166", cnpjFormatado:"45.678.901/0001-66"},
+      {nome:"Ômega Componentes ME", cnpj:"56789012000155", cnpjFormatado:"56.789.012/0001-55"},
+      {nome:"Sigma Distribuidora EIRELI", cnpj:"67890123000144", cnpjFormatado:"67.890.123/0001-44"},
+      {nome:"Vetor Hardware Comércio Ltda.", cnpj:"78901234000133", cnpjFormatado:"78.901.234/0001-33"},
+    ],
+    fase:5, valor:312880.90, atualizado:"2026-07-30", ataVigencia:null, ataAssinada:false,
+    itens:[
+      {n:1,desc:"SSD 480GB",status:"ok"},{n:2,desc:"Memória DDR4 8GB",status:"ok"},
+      {n:3,desc:"Teclado ABNT2",status:"bad"},{n:4,desc:"Mouse óptico",status:"ok"},
+      {n:5,desc:"Monitor 21,5\"",status:"ok"},{n:6,desc:"Cabo HDMI 2m",status:"ok"},
+      {n:7,desc:"Nobreak 1,2kVA",status:"wait"},{n:8,desc:"Switch 24 portas",status:"ok"},
+      {n:9,desc:"Patch cord cat6",status:"wait"},{n:10,desc:"Fonte ATX 500W",status:"ok"},
+      {n:11,desc:"Webcam HD",status:"ok"},{n:12,desc:"Headset USB",status:"ok"},
+      {n:13,desc:"Hub USB 4 portas",status:"ok"},{n:14,desc:"Suporte de monitor",status:"ok"},
+      {n:15,desc:"Toner compatível",status:"ok"}
+    ]
+  },
+  {
+    numero:"19/2026", objeto:"Gêneros alimentícios",
+    fornecedores:[{nome:"Delta Alimentos Ltda.", cnpj:"89012345000122", cnpjFormatado:"89.012.345/0001-22"}],
+    fase:2, valor:76500.00, atualizado:"2026-08-28", ataVigencia:null, ataAssinada:false,
+    itens:[
+      {n:1,desc:"Arroz tipo 1 5kg",status:"wait"},{n:2,desc:"Feijão carioca 1kg",status:"wait"},
+      {n:3,desc:"Óleo de soja 900ml",status:"wait"},{n:4,desc:"Açúcar refinado 1kg",status:"wait"},
+      {n:5,desc:"Café torrado 500g",status:"wait"},{n:6,desc:"Leite UHT 1L",status:"wait"}
+    ]
+  },
+  {
+    numero:"08/2026", objeto:"Manutenção predial",
+    fornecedores:[{nome:"Épsilon Serviços Eireli", cnpj:"90123456000111", cnpjFormatado:"90.123.456/0001-11"}],
+    fase:6, valor:145200.00, atualizado:"2026-06-15", ataVigencia:"2027-06-14", ataAssinada:true,
+    itens:[
+      {n:1,desc:"Reparo hidráulico",status:"ok"},{n:2,desc:"Pintura interna m²",status:"ok"},
+      {n:3,desc:"Troca de luminárias",status:"ok"},{n:4,desc:"Manutenção de forro",status:"ok"}
+    ]
+  }
+];
+
+/* =======================================================================
+   2. HELPERS
+   ======================================================================= */
+const $ = s => document.querySelector(s);
+const pendentes = p => p.itens.filter(i => i.status !== "ok");
+const homologados = p => p.itens.filter(i => i.status === "ok").length;
+const pct = p => Math.round(homologados(p) / p.itens.length * 100);
+const dias = iso => Math.round((new Date(iso + "T12:00:00") - HOJE) / 864e5);
+const dataBR = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR") : "—";
+const brl = v => v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/** Cada fornecedor é {nome, cnpj, cnpjFormatado}. Nunca concatena mais de 2
+    razões sociais visíveis de uma vez — o resto vira "e mais N". */
+function fornecedoresResumo(lista, max=2){
+  const l = lista || [];
+  if (!l.length) return "—";
+  if (l.length <= max) return l.map(f => esc(f.nome)).join(", ");
+  return `${l.slice(0,max).map(f => esc(f.nome)).join(", ")} e mais ${l.length - max}`;
+}
+/** Versão com <details> para telas com espaço (tabela, cards, detalhe) — nunca usar dentro de <button>. */
+function fornecedoresHTML(lista){
+  const l = lista || [];
+  if (l.length <= 2) return fornecedoresResumo(l);
+  return `<details class="forn-details"><summary>${fornecedoresResumo(l)}</summary>
+    <div class="lista-completa">${l.map(f => esc(f.nome)).join("<br>")}</div></details>`;
+}
+
+function situacaoAta(p){
+  if (pendentes(p).length) return {classe:"bad", texto:pendentes(p).length + " itens pendentes"};
+  if (!p.ataAssinada)      return {classe:"wait", texto:"Aguardando assinatura"};
+  return {classe:"ok", texto:"Ata liberada"};
+}
+
+function toast(msg, tipo=""){
+  const t = document.createElement("div");
+  t.className = "toast " + tipo;
+  t.textContent = msg;
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), 4200);
+}
+
+/* =======================================================================
+   3. ESTADO E RENDER
+   ======================================================================= */
+let selecionado = PREGOES[0].numero;
+let modoSelecaoAta = false;
+let itensSelecionados = new Set();
+
+function totais(){
+  return {
+    pregoes: PREGOES.length,
+    homologados: PREGOES.reduce((s,p) => s + homologados(p), 0),
+    pendentes: PREGOES.reduce((s,p) => s + pendentes(p).length, 0),
+    atas: PREGOES.filter(p => situacaoAta(p).classe === "ok").length,
+    travadas: PREGOES.filter(p => pendentes(p).length).length
+  };
+}
+
+function renderHero(){
+  const t = totais();
+  $("#stPregoes").textContent     = t.pregoes;
+  $("#stHomologados").textContent = t.homologados;
+  $("#stPendentes").textContent   = t.pendentes;
+  $("#stAtas").textContent        = t.atas;
+  $("#heroTitle").innerHTML = t.travadas
+    ? `<b>${t.travadas} ${t.travadas > 1 ? "atas travadas" : "ata travada"}</b> por ${t.pendentes} itens sem homologação.`
+    : "Nenhuma ata travada. Todos os itens homologados.";
+  $("#navPregoes").textContent = t.pregoes;
+  $("#footData").textContent   = HOJE.toLocaleDateString("pt-BR");
+}
+
+function renderLista(){
+  const q = ($("#filtro").value || "").toLowerCase().trim();
+  const lista = PREGOES.filter(p =>
+    (p.numero + " " + p.objeto + " " + p.fornecedores.map(f => f.nome).join(" ")).toLowerCase().includes(q));
+
+  $("#lista").innerHTML = lista.length ? lista.map(p => {
+    const s = situacaoAta(p);
+    return `<button class="item-row" role="option" aria-selected="${p.numero === selecionado}"
+              onclick="selecionar('${p.numero}')">
+        <span>
+          <span class="t">Pregão Eletrônico ${esc(p.numero)}</span>
+          <span class="s">${esc(p.objeto)} · ${p.itens.length} itens · ${fornecedoresResumo(p.fornecedores)}</span>
+        </span>
+        <span class="tag ${s.classe}">${s.texto}</span>
+      </button>`;
+  }).join("") : `<div class="empty">Nenhum pregão encontrado para “${esc(q)}”.</div>`;
+}
+
+function itensCobertos(p){
+  const set = new Set();
+  (p.atasGeradas || []).forEach(a => a.itens.forEach(n => set.add(n)));
+  return set;
+}
+
+function renderDetalhe(){
+  const p = PREGOES.find(x => x.numero === selecionado);
+  const s = situacaoAta(p), pend = pendentes(p);
+  const cobertos = itensCobertos(p);
+  const disponiveis = p.itens.filter(i => i.status === "ok" && !cobertos.has(i.n));
+  const atasGeradas = p.atasGeradas || [];
+
+  const trava = s.classe === "bad"
+    ? `<div class="lock bad"><b>Ata bloqueada.</b> Falta homologar ${pend.length} de ${p.itens.length} itens: ${pend.map(i => i.n).join(", ")}.</div>`
+    : s.classe === "wait"
+    ? `<div class="lock wait"><b>Itens completos.</b> A ata está pronta para assinatura do fornecedor.</div>`
+    : `<div class="lock ok"><b>Ata liberada.</b> Vigência até ${dataBR(p.ataVigencia)} (${
+        dias(p.ataVigencia) < 0
+          ? `venceu há ${Math.abs(dias(p.ataVigencia))} dias`
+          : `${dias(p.ataVigencia)} dias restantes`
+      }).</div>`;
+
+  $("#detalhe").innerHTML = `
+    <div class="head">
+      <h2>Pregão ${esc(p.numero)}</h2>
+      <span class="tag ${s.classe}">${s.texto}</span>
+    </div>
+    <div class="body">
+      <div class="kv"><span>Fornecedor</span><b>${fornecedoresHTML(p.fornecedores)}</b></div>
+
+      <div class="eyebrow" style="margin-top:14px">Verificar empresa (CEIS / CNEP / SICAF / PNCP)</div>
+      <div class="lista-verif-fornecedores">
+        ${p.fornecedores.map(f => `
+          <div class="kv">
+            <span>${esc(f.nome)}${f.cnpj ? ` <span class="mono" style="color:var(--muted)">· ${esc(f.cnpjFormatado)}</span>` : ""}</span>
+            <button class="btn ghost" style="padding:6px 12px;font-size:12.5px"
+              ${f.cnpj && f.cnpj.length === 14
+                ? `onclick="verificarEmpresaDoPregao('${f.cnpj}','${esc(f.nome).replace(/'/g,"\\'")}','${p.numero}')"`
+                : `disabled title="CNPJ não identificado para este fornecedor"`}>
+              🔎 Verificar Empresa
+            </button>
+          </div>`).join("")}
+      </div>
+      <div id="verifEmpresaPregao" style="margin-top:10px" hidden></div>
+
+      <div class="kv"><span>Objeto</span><b>${esc(p.objeto)}</b></div>
+      <div class="kv"><span>Valor homologado</span><b class="mono">${brl(p.valor)}</b></div>
+      <div class="kv"><span>Última consulta</span><b class="mono">${dataBR(p.atualizado)}</b></div>
+
+      <div style="margin-top:18px">
+        <div style="display:flex;justify-content:space-between;font-size:13.5px">
+          <b>${homologados(p)} de ${p.itens.length} itens homologados</b>
+          <span class="mono" style="color:var(--muted)">${pct(p)}%</span>
+        </div>
+        <div class="progress" role="progressbar" aria-valuenow="${pct(p)}" aria-valuemin="0" aria-valuemax="100">
+          <div class="bar" style="width:${pct(p)}%"></div>
+        </div>
+      </div>
+
+      <div class="eyebrow" style="margin-top:16px" title="Cada número é o identificador do item no pregão">Mapa de itens</div>
+      <div class="legend-hint">Os números identificam a posição do item no pregão — passe o mouse para ver a descrição.</div>
+      <div class="mapa">
+        ${p.itens.map(i => {
+          const situacaoTxt = i.status === "ok" ? "homologado" : i.status === "wait" ? "pendente" : "em diligência";
+          const jaCoberto = cobertos.has(i.n);
+          const podeSelecionar = modoSelecaoAta && i.status === "ok" && !jaCoberto;
+          const marcado = itensSelecionados.has(i.n);
+          const classes = `chip ${i.status}${jaCoberto ? " coberto" : ""}${marcado ? " selecionado" : ""}`;
+          const acao = modoSelecaoAta
+            ? (podeSelecionar ? `onclick="toggleSelecaoItem(${i.n})"` : "disabled")
+            : `onclick="toast('Item ${i.n}: ${esc(i.desc)} — ${situacaoTxt}')"`;
+          return `<button class="${classes}" ${acao}
+              title="Item ${i.n} — ${esc(i.desc)} (${situacaoTxt}${jaCoberto ? " — já incluído em ata gerada" : ""})"
+              aria-label="Item ${i.n}, ${esc(i.desc)}, ${situacaoTxt}${marcado ? ", selecionado" : ""}">${i.n}</button>`;
+        }).join("")}
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--olive)"></i>✓ Homologado</span>
+        <span><i style="background:var(--amber-soft);border:1px solid #E8D4A8"></i>! Pendente</span>
+        <span><i style="background:var(--rust-soft);border:1px solid #EFC9C1"></i>× Diligência / recurso</span>
+      </div>
+
+      <div class="eyebrow" style="margin-top:18px">Gerar ata com itens prontos</div>
+      <div class="legend-hint">Use quando a ata do fornecedor está incompleta: gere agora com o que já foi homologado e gere outra depois para o restante.</div>
+      ${modoSelecaoAta ? `
+        <div class="selecao-barra">
+          <span><b>${itensSelecionados.size}</b> selecionado${itensSelecionados.size === 1 ? "" : "s"}</span>
+          <span style="display:flex;gap:8px">
+            <button class="btn ghost" onclick="cancelarSelecaoAta()">Cancelar</button>
+            <button class="btn" ${itensSelecionados.size ? "" : "disabled"} onclick="confirmarAtaManual('${p.numero}')">Gerar ata com selecionados</button>
+          </span>
+        </div>` : `
+        <div class="actions" style="margin-top:8px">
+          <button class="btn ghost" ${disponiveis.length ? "" : "disabled"} onclick="iniciarSelecaoAta()">Selecionar itens manualmente</button>
+          <button class="btn" ${disponiveis.length ? "" : "disabled"}
+                  onclick="gerarAta('${p.numero}', [${disponiveis.map(i => i.n).join(",")}])">
+            Gerar ata com ${disponiveis.length} homologado${disponiveis.length === 1 ? "" : "s"}
+          </button>
+        </div>`}
+      ${atasGeradas.length ? `
+        <div class="atas-geradas-lista">
+          ${atasGeradas.map((a, idx) => `
+            <div class="item">
+              <span>Ata parcial ${idx + 1} — itens ${a.itens.join(", ")}</span>
+              <span class="mono" style="color:var(--muted)">${new Date(a.criadaEm).toLocaleDateString("pt-BR")}</span>
+            </div>`).join("")}
+        </div>` : ""}
+
+      ${trava}
+
+      <div class="actions">
+        <button class="btn ghost" id="btnConsultar" onclick="consultar()">Consultar atualização</button>
+        <button class="btn" onclick="verAta()" ${s.classe === "bad" ? "disabled" : ""}
+                title="${s.classe === "bad" ? "Bloqueada até homologar todos os itens pendentes" : "Ver detalhes da ata"}">Ver ata</button>
+      </div>
+
+      <div class="eyebrow" style="margin-top:18px">Termo de referência</div>
+      <div id="trBox" style="margin-top:8px"></div>
+    </div>`;
+
+  renderTR(p);
+  renderFluxo(p);
+}
+
+function renderTR(p){
+  const box = $("#trBox");
+  if (!box) return;
+
+  if (!BACKEND){
+    box.innerHTML = `<div class="legend-hint">Anexar TR fica disponível quando o painel está conectado à API local.</div>`;
+    return;
+  }
+
+  if (p.anexo){
+    box.innerHTML = `
+      <div class="kv">
+        <span>Arquivo</span>
+        <b><a href="/api/pregoes/${encodeURIComponent(p.numero)}/anexo" target="_blank" rel="noopener">${esc(p.anexo.arquivo)}</a></b>
+      </div>
+      <div class="kv"><span>Enviado em</span><b class="mono">${new Date(p.anexo.enviado_em).toLocaleString("pt-BR")}</b></div>
+      <div class="actions">
+        <button class="btn ghost" onclick="removerTR('${p.numero}')">Remover anexo</button>
+      </div>`;
+  } else {
+    box.innerHTML = `
+      <div class="actions" style="margin-top:0">
+        <label class="btn ghost" style="cursor:pointer">
+          Anexar arquivo (PDF ou Word)
+          <input type="file" accept=".pdf,.doc,.docx" style="display:none" onchange="anexarTR('${p.numero}', this.files[0])">
+        </label>
+      </div>`;
+  }
+}
+
+async function anexarTR(numero, arquivo){
+  if (!arquivo) return;
+  toast("Enviando arquivo...");
+  const dados = new FormData();
+  dados.append("arquivo", arquivo);
+  try{
+    const r = await fetch(`/api/pregoes/${encodeURIComponent(numero)}/anexo`, {method:"POST", body:dados});
+    if (!r.ok) throw new Error();
+    toast("Termo de referência anexado.", "ok");
+    await detectarBackend();
+  }catch(e){
+    toast("Falha ao enviar o arquivo.", "bad");
+  }
+}
+
+async function removerTR(numero){
+  try{
+    const r = await fetch(`/api/pregoes/${encodeURIComponent(numero)}/anexo`, {method:"DELETE"});
+    if (!r.ok) throw new Error();
+    toast("Anexo removido.", "ok");
+    await detectarBackend();
+  }catch(e){
+    toast("Falha ao remover o anexo.", "bad");
+  }
+}
+
+function renderFluxo(p){
+  $("#fluxoTag").textContent = "Pregão " + p.numero;
+  $("#fluxo").innerHTML = FASES.map((f,idx) => {
+    const n = idx + 1;
+    const cls = n < p.fase ? "done" : n === p.fase ? "now" : "";
+    const marca = n < p.fase ? "✓" : n;
+    return `<div class="fase ${cls}"><span class="dot">${marca}</span><span class="nm">${f}</span></div>`
+         + (idx < FASES.length - 1 ? '<span class="conn"></span>' : "");
+  }).join("");
+}
+
+let ordenacaoTabela = {campo:null, dir:1};
+
+function ordenarTabela(campo){
+  if (ordenacaoTabela.campo === campo) ordenacaoTabela.dir *= -1;
+  else ordenacaoTabela = {campo, dir:-1};
+  renderTabela();
+}
+
+function renderTabela(){
+  const q = ($("#filtroTabela")?.value || "").toLowerCase().trim();
+  let lista = PREGOES.filter(p =>
+    (p.numero + " " + p.objeto + " " + p.fornecedores.map(f => f.nome).join(" ")).toLowerCase().includes(q));
+
+  if (ordenacaoTabela.campo === "pendentes"){
+    lista = [...lista].sort((a,b) => (pendentes(a).length - pendentes(b).length) * ordenacaoTabela.dir);
+  }
+
+  const seta = $("#setaPendentes");
+  if (seta) seta.textContent = ordenacaoTabela.campo === "pendentes" ? (ordenacaoTabela.dir === 1 ? "▲" : "▼") : "";
+
+  $("#tabela").innerHTML = lista.length ? lista.map(p => {
+    const s = situacaoAta(p);
+    return `<tr>
+      <td class="num"><b>${esc(p.numero)}</b></td>
+      <td>${esc(p.objeto)}</td>
+      <td>${fornecedoresHTML(p.fornecedores)}</td>
+      <td class="num">${homologados(p)}/${p.itens.length}</td>
+      <td class="num" style="color:${pendentes(p).length ? "var(--rust)" : "var(--muted)"}">
+        ${pendentes(p).length ? pendentes(p).map(i => i.n).join(", ") : "—"}</td>
+      <td>${FASES[p.fase - 1]}</td>
+      <td><span class="tag ${s.classe}">${s.texto}</span></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="7" class="empty">Nenhum pregão encontrado${q ? ` para "${esc(q)}"` : ""}.</td></tr>`;
+}
+
+function renderStatsPregoes(){
+  const t = totais();
+  $("#statsPregoes").innerHTML = `
+    <div class="stat"><div class="n">${t.pregoes}</div><div class="l">Pregões</div></div>
+    <div class="stat alert"><div class="n">${t.pendentes}</div><div class="l">Itens pendentes</div></div>
+    <div class="stat"><div class="n">${brl(PREGOES.reduce((s,p) => s + p.valor, 0))}</div><div class="l">Valor total</div></div>`;
+}
+
+function renderAtas(){
+  const comAta = PREGOES.filter(p => p.ataVigencia);
+  const ord = $("#ordAtas")?.value || "vencimento";
+  const ordenadas = [...comAta].sort((a,b) => {
+    if (ord === "numero") return a.numero.localeCompare(b.numero, "pt-BR", {numeric:true});
+    if (ord === "valor") return b.valor - a.valor;
+    return new Date(a.ataVigencia) - new Date(b.ataVigencia);
+  });
+
+  $("#atas").innerHTML = ordenadas.map(p => {
+    const d = dias(p.ataVigencia);
+    const cls = d < 90 ? "bad" : d < 180 ? "wait" : "ok";
+    const decorrido = Math.min(100, Math.max(0, 100 - (d / 365 * 100)));
+    const rotuloDias = d < 0
+      ? `Venceu há ${Math.abs(d)} dia${Math.abs(d) === 1 ? "" : "s"}`
+      : `${d} dia${d === 1 ? "" : "s"}`;
+    return `<div class="panel"><div class="body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>Ata ${esc(p.numero)}</b><span class="tag ${cls}">${rotuloDias}</span>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-top:4px">${fornecedoresHTML(p.fornecedores)}</div>
+      <div class="progress"><div class="bar" style="width:${decorrido}%;background:${cls === "bad" ? "var(--rust)" : "var(--olive)"}"></div></div>
+      <div class="kv"><span>Vigência até</span><b class="mono">${dataBR(p.ataVigencia)}</b></div>
+      <div class="kv"><span>Valor registrado</span><b class="mono">${brl(p.valor)}</b></div>
+    </div></div>`;
+  }).join("") || `<div class="empty">Nenhuma ata liberada até o momento.</div>`;
+
+  renderStatsAtas(comAta);
+}
+
+function renderStatsAtas(comAta){
+  const proxima = comAta.length ? Math.min(...comAta.map(p => dias(p.ataVigencia))) : null;
+  const rotuloProxima = proxima === null ? "—" : Math.abs(proxima);
+  const legendaProxima = proxima !== null && proxima < 0
+    ? "Dias — já venceu a mais próxima"
+    : "Dias até a mais próxima vencer";
+  $("#statsAtas").innerHTML = `
+    <div class="stat"><div class="n">${comAta.length}</div><div class="l">Atas com vigência</div></div>
+    <div class="stat ${proxima !== null && proxima < 90 ? "alert" : ""}"><div class="n">${rotuloProxima}</div><div class="l">${legendaProxima}</div></div>
+    <div class="stat"><div class="n">${brl(comAta.reduce((s,p) => s + p.valor, 0))}</div><div class="l">Valor total registrado</div></div>`;
+}
+
+/* bucket: "vencida" (vermelho forte) · "semana" (laranja, ≤7 dias ou ação imediata) · "depois" (neutro) */
+function gerarAlertas(){
+  const out = [];
+  PREGOES.forEach(p => {
+    const parado = -dias(p.atualizado);
+    if (pendentes(p).length && parado > 20)
+      out.push({bucket:"semana", t:`Pregão ${p.numero} sem movimentação há ${parado} dias`,
+        d:`${pendentes(p).length} itens pendentes travando a ata de ${fornecedoresResumo(p.fornecedores)}.`});
+    if (p.ataVigencia && dias(p.ataVigencia) < 90){
+      const d = dias(p.ataVigencia);
+      const bucket = d < 0 ? "vencida" : d <= 7 ? "semana" : "depois";
+      const titulo = d < 0
+        ? `Ata ${p.numero} venceu há ${Math.abs(d)} dia${Math.abs(d) === 1 ? "" : "s"}`
+        : `Ata ${p.numero} vence em ${d} dia${d === 1 ? "" : "s"}`;
+      out.push({bucket, t:titulo,
+        d:`Vigência até ${dataBR(p.ataVigencia)}. Avaliar nova contratação ou saldo remanescente.`});
+    }
+    if (!pendentes(p).length && !p.ataAssinada)
+      out.push({bucket:"semana", t:`Ata ${p.numero} pronta para assinatura`,
+        d:`Todos os ${p.itens.length} itens homologados. Encaminhar para assinatura do fornecedor.`});
+    if (p.itens.some(i => i.status === "bad"))
+      out.push({bucket:"semana", t:`Pregão ${p.numero} com item em diligência`,
+        d:`Itens ${p.itens.filter(i => i.status === "bad").map(i => i.n).join(", ")} exigem resposta antes da homologação.`});
+  });
+  return out;
+}
+
+const GRUPOS_ALERTA = {
+  vencida: {titulo:"Vencidas", tipo:"crit"},
+  semana:  {titulo:"Esta semana", tipo:"warn"},
+  depois:  {titulo:"Depois", tipo:"info"},
+};
+const ORDEM_GRUPOS_ALERTA = ["vencida","semana","depois"];
+
+function renderAlertas(){
+  const a = gerarAlertas();
+  $("#navAlertas").textContent = a.length;
+
+  $("#alertas").innerHTML = a.length ? ORDEM_GRUPOS_ALERTA.map(chave => {
+    const itens = a.filter(x => x.bucket === chave);
+    if (!itens.length) return "";
+    const g = GRUPOS_ALERTA[chave];
+    return `<div class="alerta-grupo">
+        <div class="alerta-grupo-titulo">${g.titulo} <span class="count">${itens.length}</span></div>
+        ${itens.map(x => `<div class="alerta ${g.tipo}"><span class="mark"></span>
+           <span><span class="t">${esc(x.t)}</span><span class="d">${esc(x.d)}</span></span></div>`).join("")}
+      </div>`;
+  }).join("") : `<div class="empty">Nada exigindo atenção agora.</div>`;
+
+  renderStatsAlertas(a);
+}
+
+function renderStatsAlertas(a){
+  const vencidas = a.filter(x => x.bucket === "vencida").length;
+  const semana = a.filter(x => x.bucket === "semana").length;
+  $("#statsAlertas").innerHTML = `
+    <div class="stat ${vencidas ? "alert" : ""}"><div class="n">${vencidas}</div><div class="l">Vencidas</div></div>
+    <div class="stat"><div class="n">${semana}</div><div class="l">Esta semana</div></div>
+    <div class="stat"><div class="n">${a.length}</div><div class="l">Total de alertas</div></div>`;
+}
+
+/* =======================================================================
+   4. AÇÕES
+   ======================================================================= */
+function selecionar(n){
+  selecionado = n;
+  modoSelecaoAta = false;
+  itensSelecionados = new Set();
+  renderLista(); renderDetalhe();
+}
+
+function iniciarSelecaoAta(){ modoSelecaoAta = true; itensSelecionados = new Set(); renderDetalhe(); }
+function cancelarSelecaoAta(){ modoSelecaoAta = false; itensSelecionados = new Set(); renderDetalhe(); }
+function toggleSelecaoItem(n){
+  itensSelecionados.has(n) ? itensSelecionados.delete(n) : itensSelecionados.add(n);
+  renderDetalhe();
+}
+function confirmarAtaManual(numero){ gerarAta(numero, [...itensSelecionados]); }
+
+async function gerarAta(numero, itens){
+  if (!itens || !itens.length){ toast("Selecione ao menos um item homologado.", "bad"); return; }
+
+  const chamada = BACKEND
+    ? fetch(`/api/pregoes/${encodeURIComponent(numero)}/atas`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({itens})
+      }).then(r => r.json())
+    : new Promise(res => setTimeout(() => res({ok:true}), 500));
+
+  const res = await chamada;
+  if (!res.ok){ toast(res.erro === "itens_ja_cobertos" ? "Esses itens já estão em outra ata gerada." : "Não foi possível gerar a ata.", "bad"); return; }
+
+  if (!BACKEND){
+    const p = PREGOES.find(x => x.numero === numero);
+    p.atasGeradas = p.atasGeradas || [];
+    p.atasGeradas.push({id: Date.now(), itens: [...itens].sort((a,b) => a - b), criadaEm: new Date().toISOString()});
+  }
+
+  toast(`Ata gerada com ${itens.length} ${itens.length === 1 ? "item" : "itens"}.`, "ok");
+  modoSelecaoAta = false; itensSelecionados = new Set();
+  BACKEND ? await detectarBackend() : renderTudo();
+}
+
+function trocarView(v){
+  document.querySelectorAll(".view").forEach(s => s.hidden = s.id !== "view-" + v);
+  document.querySelectorAll(".nav").forEach(b =>
+    b.dataset.view === v ? b.setAttribute("aria-current","page") : b.removeAttribute("aria-current"));
+  window.scrollTo({top:0});
+}
+document.querySelectorAll(".nav").forEach(b =>
+  b.addEventListener("click", () => trocarView(b.dataset.view)));
+
+function consultar(){
+  const b = $("#btnConsultar");
+  b.disabled = true;
+  b.innerHTML = '<span class="spin"></span>Consultando...';
+  setTimeout(() => {
+    const p = PREGOES.find(x => x.numero === selecionado);
+    const pend = pendentes(p);
+    let mensagemBotao;
+    if (pend.length){
+      const item = pend[0];
+      item.status = "ok";
+      p.atualizado = HOJE.toISOString().slice(0,10);
+      mensagemBotao = `Item ${item.n} homologado ✓`;
+      toast(`Item ${item.n} homologado no Compras.gov.br.`, "ok");
+    } else {
+      mensagemBotao = "Sem novidades";
+      toast("Nenhuma alteração desde a última consulta.");
+    }
+    renderTudo();
+    // renderTudo() recria o botão via renderDetalhe(); pega a referência nova
+    // para mostrar o resultado antes de voltar ao rótulo padrão.
+    const novo = $("#btnConsultar");
+    if (novo){
+      novo.disabled = true;
+      novo.textContent = mensagemBotao;
+      setTimeout(() => {
+        const atual = $("#btnConsultar");
+        if (atual){ atual.disabled = false; atual.textContent = "Consultar atualização"; }
+      }, 1600);
+    }
+  }, 900);
+}
+
+function verAta(){
+  const p = PREGOES.find(x => x.numero === selecionado);
+  const s = situacaoAta(p);
+  s.classe === "ok"
+    ? toast(`Ata ${p.numero} — vigência até ${dataBR(p.ataVigencia)}.`, "ok")
+    : toast("Ata ainda não assinada pelo fornecedor.", "bad");
+}
+
+function baixarCSV(){
+  const linhas = [["Pregao","Objeto","Fornecedor","Item","Descricao","Situacao"]];
+  PREGOES.forEach(p => pendentes(p).forEach(i =>
+    linhas.push([p.numero, p.objeto, p.fornecedor, i.n, i.desc,
+      i.status === "wait" ? "Pendente" : "Diligencia"])));
+  const csv = "\uFEFF" + linhas.map(l => l.map(c => `"${c}"`).join(";")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
+  const a = Object.assign(document.createElement("a"), {href:url, download:"itens_pendentes.csv"});
+  a.click(); URL.revokeObjectURL(url);
+  toast(`${linhas.length - 1} itens pendentes exportados.`, "ok");
+}
+
+/* ---- modal ---- */
+let ultimoFoco = null;
+function abrirModal(){
+  ultimoFoco = document.activeElement;
+  $("#modal").classList.add("open");
+  $("#resultado").innerHTML = "";
+  $("#fArtefato").classList.remove("err");
+  $("#artefato").value = "";
+  $("#artefato").focus();
+}
+function fecharModal(){ $("#modal").classList.remove("open"); ultimoFoco && ultimoFoco.focus(); }
+$("#modal").addEventListener("click", e => { if (e.target.id === "modal") fecharModal(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#modal").classList.contains("open")) fecharModal();
+});
+
+function pesquisar(){
+  const n = $("#artefato").value.trim();
+  const campo = $("#fArtefato");
+  if (!/^\d{4,}$/.test(n)){
+    campo.classList.add("err");
+    $("#hintArtefato").textContent = "Informe o número do artefato — pelo menos 4 dígitos.";
+    $("#artefato").focus();
+    return;
+  }
+  campo.classList.remove("err");
+  $("#hintArtefato").textContent = "Somente números, como aparece no Compras.gov.br.";
+  const b = $("#btnBuscar");
+  b.disabled = true; b.innerHTML = '<span class="spin"></span>Pesquisando...';
+
+  setTimeout(() => {
+    b.disabled = false; b.textContent = "Pesquisar artefato";
+    $("#resultado").innerHTML = `
+      <div class="panel"><div class="body">
+        <span class="tag ok">Artefato localizado</span>
+        <h3 style="margin:10px 0 2px">Termo de Referência ${esc(n)}</h3>
+        <div style="font-size:13px;color:var(--muted)">UASG ${esc($("#uasg").value)} · resultado de demonstração</div>
+        <div class="kv" style="margin-top:12px"><span>Pregão vinculado</span><b class="mono">52/2026</b></div>
+        <div class="kv"><span>Itens</span><b class="mono">9</b></div>
+        <div class="kv"><span>Fornecedores</span><b class="mono">3</b></div>
+        <div class="actions"><button class="btn" onclick="fecharModal();toast('Pregão 52/2026 adicionado ao acompanhamento.','ok')">Adicionar ao acompanhamento</button></div>
+      </div></div>`;
+  }, 800);
+}
+
+/* =======================================================================
+   5. VERIFICAÇÃO DE EMPRESAS (CEIS / CNEP / SICAF / PNCP)
+   ======================================================================= */
+const NOME_FONTE_STATUS = {
+  sem_registro: "Sem registro", registro_encontrado: "Registro encontrado",
+  nao_consultado: "Consulta manual necessária", erro: "Erro na consulta",
+  atencao: "Atenção", consulta_realizada: "Consultado",
+  confirmado_manualmente: "Confirmado manualmente",
+};
+const CLASSE_FONTE_STATUS = {
+  sem_registro: "ok", registro_encontrado: "bad", nao_consultado: "info",
+  erro: "erro", atencao: "wait", consulta_realizada: "info",
+  confirmado_manualmente: "info",
+};
+const EMOJI_FONTE_STATUS = {
+  sem_registro: "🟢", registro_encontrado: "🔴", nao_consultado: "⚪",
+  erro: "🟠", atencao: "🟡", consulta_realizada: "🔵",
+  confirmado_manualmente: "🔵",
+};
+const CLASSE_CONSOLIDADO = {
+  "SEM REGISTRO": "ok", "REGISTRO ENCONTRADO": "bad", "CONSULTA INCOMPLETA": "erro",
+  "VERIFICAÇÃO INCOMPLETA": "wait", "CONSULTA REALIZADA": "info",
+};
+
+// {cnpj, nome, numeroPregao, destino} da última verificação feita, de
+// qualquer lugar do sistema — é o que liga "Nova consulta"/"Histórico"/
+// "Relatório" à empresa certa, venha o clique de onde vier.
+let contextoEmpresaAtual = null;
+
+/** SICAF nunca tem resultado automático — aqui entra o controle de
+    confirmação manual (nunca vira "sem registro": só documenta que um
+    humano conferiu, quando, e com que comprovante). */
+function extraLinhaSicaf(f, cnpjDigits){
+  if (f.status === "confirmado_manualmente" && f.confirmacaoManual){
+    const cm = f.confirmacaoManual;
+    return `<br><span style="font-size:12px;color:var(--olive-dark)">
+        ✅ Confirmado em ${new Date(cm.confirmadoEm).toLocaleString("pt-BR")}
+        ${cm.arquivo ? ` · <a href="/api/empresas/${cnpjDigits}/comprovante/SICAF" target="_blank" rel="noopener">ver comprovante</a>` : " · sem comprovante anexado"}
+      </span><br>
+      <button class="btn ghost" style="margin-top:6px;padding:4px 10px;font-size:11.5px" onclick="removerConfirmacaoSicaf('${cnpjDigits}')">Desfazer confirmação</button>`;
+  }
+  return `<br><a href="${f.fonte_url}" target="_blank" rel="noopener" style="font-size:12px">🔗 Consultar SICAF</a>
+    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn ghost" style="padding:4px 10px;font-size:11.5px" onclick="confirmarSicafManual('${cnpjDigits}', null)">☑ Marcar consulta como realizada</button>
+      <label class="btn ghost" style="padding:4px 10px;font-size:11.5px;cursor:pointer">
+        📎 Com comprovante
+        <input type="file" style="display:none" onchange="confirmarSicafManual('${cnpjDigits}', this.files[0])">
+      </label>
+    </div>`;
+}
+
+function montarCartaoVerificacao(nome, cnpjFormatado, d){
+  const c = d.consolidado;
+  const linhasFonte = c.fontes.map(f => `
+    <div class="kv" style="align-items:flex-start">
+      <span>${EMOJI_FONTE_STATUS[f.status] || "⚪"} ${esc(f.fonte)}</span>
+      <b style="text-align:right">
+        <span class="tag ${CLASSE_FONTE_STATUS[f.status] || "info"}">${NOME_FONTE_STATUS[f.status] || f.status}</span><br>
+        <span style="font-weight:400;font-size:12.5px;color:var(--muted)">${esc(f.mensagem)}</span>
+        ${f.fonte === "SICAF" ? extraLinhaSicaf(f, d.cnpj.replace(/\D/g,"")) : ""}
+      </b>
+    </div>`).join("");
+
+  const sicaf = c.fontes.find(f => f.fonte === "SICAF");
+  const consultadoEm = c.fontes[0]?.consultado_em;
+
+  return `
+    <section class="panel">
+      <div class="head">
+        <div>
+          <h2>${esc(nome || "Empresa")}</h2>
+          <div class="mono" style="font-size:12.5px;color:var(--muted);margin-top:2px">${esc(cnpjFormatado)}</div>
+        </div>
+        <span class="tag ${CLASSE_CONSOLIDADO[c.status] || "info"}">${c.emoji} ${c.status}</span>
+      </div>
+      <div class="body tight">${linhasFonte}</div>
+      <div class="body" style="padding-top:6px">
+        <div class="legend-hint">Última consulta: ${consultadoEm ? new Date(consultadoEm).toLocaleString("pt-BR") : "—"}</div>
+        <div class="actions">
+          <button class="btn ghost" onclick="novaConsultaEmpresa()">🔄 Nova consulta</button>
+          <button class="btn ghost" onclick="gerarRelatorioEmpresa()">📄 Gerar relatório</button>
+          <button class="btn ghost" onclick="verHistoricoEmpresa()">📜 Ver histórico</button>
+          ${sicaf ? `<a class="btn ghost" href="${sicaf.fonte_url}" target="_blank" rel="noopener">🔗 Consultar SICAF</a>` : ""}
+        </div>
+      </div>
+    </section>`;
+}
+
+async function executarVerificacaoEmpresa(cnpjBruto, nome, numeroPregao, destinoSeletor){
+  const destino = $(destinoSeletor);
+  destino.hidden = false;
+  destino.innerHTML = `<div class="panel"><div class="body empty"><span class="spin"></span> Verificando empresa...</div></div>`;
+
+  try{
+    const r = await fetch("/api/empresas/verificar", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({cnpj: cnpjBruto, pregao: numeroPregao || null, razaoSocial: nome || ""}),
+    });
+    const d = await r.json();
+
+    if (!r.ok){
+      destino.innerHTML = `<div class="panel"><div class="body"><div class="lock bad">
+        ${d.erro === "cnpj_invalido" ? "CNPJ inválido — confira os dígitos." : "Não foi possível verificar esta empresa."}
+      </div></div></div>`;
+      return;
+    }
+
+    contextoEmpresaAtual = {cnpj: cnpjBruto.replace(/\D/g, ""), nome: nome || "", numeroPregao: numeroPregao || null, destino: destinoSeletor};
+    $("#btnHistoricoEmpresa") && ($("#btnHistoricoEmpresa").disabled = false);
+    $("#btnRelatorioEmpresa") && ($("#btnRelatorioEmpresa").disabled = false);
+
+    destino.innerHTML = montarCartaoVerificacao(nome, d.cnpj, d);
+
+    (d.novidades || []).forEach(n => toast(`🚨 Novo registro em ${n.fonte}${nome ? " para " + nome : ""}.`, "bad"));
+    if (!d.novidades?.length) toast("Consulta concluída.", "ok");
+  }catch(e){
+    destino.innerHTML = `<div class="panel"><div class="body"><div class="lock bad">Falha ao falar com o servidor.</div></div></div>`;
+  }
+}
+
+async function confirmarSicafManual(cnpjDigits, arquivo){
+  const dados = new FormData();
+  dados.append("fonte", "SICAF");
+  if (arquivo) dados.append("arquivo", arquivo);
+
+  try{
+    const r = await fetch(`/api/empresas/${cnpjDigits}/confirmar-manual`, {method:"POST", body: dados});
+    if (!r.ok) throw new Error();
+    toast("Consulta do SICAF marcada como realizada.", "ok");
+    if (contextoEmpresaAtual?.cnpj === cnpjDigits) novaConsultaEmpresa();
+  }catch(e){
+    toast("Não foi possível registrar a confirmação.", "bad");
+  }
+}
+
+async function removerConfirmacaoSicaf(cnpjDigits){
+  try{
+    const r = await fetch(`/api/empresas/${cnpjDigits}/confirmar-manual?fonte=SICAF`, {method:"DELETE"});
+    if (!r.ok) throw new Error();
+    toast("Confirmação removida.", "ok");
+    if (contextoEmpresaAtual?.cnpj === cnpjDigits) novaConsultaEmpresa();
+  }catch(e){
+    toast("Falha ao remover a confirmação.", "bad");
+  }
+}
+
+function novaConsultaEmpresa(){
+  if (!contextoEmpresaAtual) return;
+  executarVerificacaoEmpresa(contextoEmpresaAtual.cnpj, contextoEmpresaAtual.nome, contextoEmpresaAtual.numeroPregao, contextoEmpresaAtual.destino);
+}
+
+/** Chamado pelo botão "🔎 Verificar empresa" da aba Empresas — CNPJ digitado à mão. */
+function verificarEmpresa(){
+  const cnpjBruto = $("#empCnpj").value.trim();
+  executarVerificacaoEmpresa(cnpjBruto, "", null, "#empResultadoCard");
+}
+
+/** Chamado pelo botão ao lado de cada fornecedor no detalhe do pregão — reaproveita
+    o CNPJ que já está no processo, sem o usuário digitar de novo. */
+function verificarEmpresaDoPregao(cnpj, nome, numeroPregao){
+  $("#empCnpj").value = nome;
+  executarVerificacaoEmpresa(cnpj, nome, numeroPregao, "#verifEmpresaPregao");
+}
+
+async function verHistoricoEmpresa(){
+  if (!contextoEmpresaAtual) return;
+  if (contextoEmpresaAtual.destino !== "#empResultadoCard") trocarView("empresas");
+
+  const r = await fetch(`/api/empresas/${encodeURIComponent(contextoEmpresaAtual.cnpj)}/historico`);
+  const d = await r.json();
+
+  $("#painelHistoricoEmpresa").hidden = false;
+  $("#empHistoricoTabela").innerHTML = d.historico.length ? d.historico.slice().reverse().map(h => `
+    <tr>
+      <td class="mono">${new Date(h.em).toLocaleString("pt-BR")}</td>
+      <td>${esc(h.pregao || "—")}</td>
+      <td>${esc(h.status)}</td>
+      <td>${EMOJI_FONTE_STATUS[h.fontes.CEIS] || "—"}</td>
+      <td>${EMOJI_FONTE_STATUS[h.fontes.CNEP] || "—"}</td>
+      <td>${EMOJI_FONTE_STATUS[h.fontes.SICAF] || "—"}</td>
+      <td>${EMOJI_FONTE_STATUS[h.fontes.PNCP] || "—"}</td>
+    </tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhuma consulta anterior.</td></tr>`;
+}
+
+async function gerarRelatorioEmpresa(){
+  if (!contextoEmpresaAtual) return;
+  if (contextoEmpresaAtual.destino !== "#empResultadoCard") trocarView("empresas");
+
+  const b = $("#btnRelatorioEmpresa");
+  if (b){ b.disabled = true; b.innerHTML = '<span class="spin"></span>Gerando...'; }
+
+  try{
+    const r = await fetch("/api/empresas/relatorio", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({cnpj: contextoEmpresaAtual.cnpj, razaoSocial: contextoEmpresaAtual.nome}),
+    });
+    const rel = await r.json();
+
+    $("#painelRelatorioEmpresa").hidden = false;
+    $("#empRelatorioTexto").innerHTML = `
+      <div class="kv"><span>Empresa</span><b>${esc(rel.empresa.razaoSocial || rel.empresa.cnpj)}</b></div>
+      <div class="kv"><span>CNPJ</span><b class="mono">${esc(rel.empresa.cnpj)}</b></div>
+      <div class="kv"><span>Gerado em</span><b class="mono">${new Date(rel.gerado_em).toLocaleString("pt-BR")}</b></div>
+      <div style="margin-top:14px"><b>Conclusão</b><p style="margin:6px 0 0;color:var(--ink)">${esc(rel.conclusao)}</p></div>
+      <div style="margin-top:14px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px">${esc(rel.aviso)}</div>`;
+    toast("Relatório gerado.", "ok");
+  }catch(e){
+    toast("Falha ao gerar relatório.", "bad");
+  }finally{
+    if (b){ b.disabled = false; b.textContent = "📄 Gerar relatório"; }
+  }
+}
+
+/* =======================================================================
+   6. LOGIN E SESSÃO DO COMPRAS.GOV.BR
+   ======================================================================= */
+let BACKEND = false;                                   // vira true se a API local responder
+let SESSAO = { valida:true, expiraEm:"2026-08-29T18:40:00", usuario:"CPF ***.456.789-**" };
+let COLETAS = [
+  {em:"2026-08-29 09:12", ok:true,  msg:"5 pregões · 3 itens alterados"},
+  {em:"2026-08-28 09:11", ok:true,  msg:"5 pregões · nenhuma alteração"},
+  {em:"2026-08-27 09:12", ok:false, msg:"sessão expirada — coleta abortada"}
+];
+
+function entrar(){
+  const senha = $("#gSenha").value;
+  if (senha.length < 4){
+    $("#gCampoSenha").classList.add("err");
+    $("#gHint").textContent = "Digite a senha do painel para continuar.";
+    $("#gSenha").focus();
+    return;
+  }
+  $("#gate").hidden = true;
+  renderSessao();
+  SESSAO.valida
+    ? toast("Sessão do Compras.gov.br ativa. Dados de hoje já carregados.", "ok")
+    : toast("Sessão do Compras.gov.br expirada. Reconecte em Conexão.", "bad");
+}
+
+function minutosRestantes(){
+  // Sem expiraEm = fonte não rastreia expiração (ex.: coleta via planilha) —
+  // não é o mesmo que "expirou", então não trava a sessão como inválida.
+  if (!SESSAO.expiraEm) return Infinity;
+  return Math.round((new Date(SESSAO.expiraEm) - new Date()) / 60000);
+}
+
+function renderSessao(){
+  const min = minutosRestantes();
+  const viva = SESSAO.valida && min > 0;
+  $("#navSessao").textContent = viva ? "on" : "off";
+  $("#navSessao").classList.toggle("alert", !viva);
+  $("#bannerSessao").hidden = viva;
+  $("#tagFonte").textContent = BACKEND ? "API local" : "demonstração";
+  $("#footFonte").textContent = BACKEND ? "Fonte: coleta local." : "Dados de demonstração.";
+
+  $("#cardSessao").innerHTML = `
+    <div class="sessao ${viva ? "ok" : "exp"}">
+      <span class="pulse"></span>
+      <div>
+        <b>${viva ? "Sessão ativa" : "Sessão expirada"}</b>
+        <div style="font-size:13px;margin-top:3px">
+          ${viva
+            ? `${esc(SESSAO.usuario)} · expira em ${min} min`
+            : "O robô não consegue coletar itens da área logada até você reconectar."}
+        </div>
+      </div>
+    </div>`;
+  $("#btnColeta").disabled = !viva;
+  renderColetas();
+}
+
+function renderColetas(){
+  $("#logColetas").innerHTML = COLETAS.map(c =>
+    `<div><b>${c.em}</b> ${c.ok ? "✓" : "✕"} ${esc(c.msg)}</div>`).join("");
+}
+
+function conectar(){
+  const b = $("#btnConectar");
+  b.disabled = true;
+  b.innerHTML = '<span class="spin"></span>Abrindo Chrome...';
+
+  if (!BACKEND){
+    new Promise(r => setTimeout(() => r({ok:true}), 2200)).then(() => {
+      SESSAO = { valida:true, expiraEm:new Date(Date.now() + 55*60000).toISOString(), usuario:SESSAO.usuario };
+      toast("Sessão salva. A coleta volta a rodar sozinha.", "ok");
+      renderSessao();
+    }).finally(() => { b.disabled = false; b.textContent = "Conectar ao Compras.gov.br"; });
+    return;
+  }
+
+  fetch("/api/sessao/conectar", {method:"POST"}).then(r => r.json()).then(res => {
+    toast(res.detalhe || "Abrindo Chrome...", res.ok ? "ok" : "bad");
+    if (!res.ok){ b.disabled = false; b.textContent = "Conectar ao Compras.gov.br"; return; }
+    aguardarSessao(b);
+  }).catch(() => {
+    toast("Não foi possível abrir o Chrome.", "bad");
+    b.disabled = false; b.textContent = "Conectar ao Compras.gov.br";
+  });
+}
+
+/* Depois de abrir o Chrome, fica checando /api/status até o Chrome de
+   automação (CDP em 9222) responder -- não significa login concluído,
+   só que o navegador está pronto pro robô usar. Login em si é manual. */
+function aguardarSessao(b){
+  b.innerHTML = '<span class="spin"></span>Aguardando o Chrome abrir...';
+  let tentativas = 0;
+  const intervalo = setInterval(async () => {
+    tentativas++;
+    try{
+      const r = await fetch("/api/status");
+      const d = await r.json();
+      if (d.sessao?.valida){
+        clearInterval(intervalo);
+        SESSAO = d.sessao;
+        toast("Chrome pronto. Faça login no Compras.gov.br se ainda não tiver feito.", "ok");
+        renderSessao();
+        b.disabled = false; b.textContent = "Conectar ao Compras.gov.br";
+        return;
+      }
+    }catch(e){ /* tenta de novo no próximo tick */ }
+
+    if (tentativas >= 15){
+      clearInterval(intervalo);
+      toast("Chrome demorou pra responder. Confira se ele abriu.", "bad");
+      b.disabled = false; b.textContent = "Conectar ao Compras.gov.br";
+    }
+  }, 2000);
+}
+
+function rodarColeta(){
+  const b = $("#btnColeta");
+  b.disabled = true;
+  b.innerHTML = '<span class="spin"></span>Coletando...';
+
+  if (!BACKEND){
+    new Promise(r => setTimeout(() => r({alterados:1}), 1400)).then(res => {
+      const agora = new Date().toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"});
+      COLETAS.unshift({em:agora, ok:true, msg:`${PREGOES.length} pregões · ${res.alterados||0} itens alterados`});
+      COLETAS = COLETAS.slice(0,8);
+      toast("Coleta concluída.", "ok");
+      renderTudo();
+    }).finally(() => { b.disabled = false; b.textContent = "Rodar coleta agora"; });
+    return;
+  }
+
+  // O bot roda em background (pode levar minutos) -- so dispara aqui e
+  // fica perguntando /api/coletar/status ate ele terminar.
+  fetch("/api/coletar", {method:"POST"}).then(r => r.json()).then(res => {
+    if (!res.ok){
+      toast(res.detalhe || "Não foi possível iniciar a coleta.", "bad");
+      b.disabled = false; b.textContent = "Rodar coleta agora";
+      return;
+    }
+    toast(res.detalhe || "Coleta iniciada em background...", "ok");
+    aguardarColeta(b);
+  }).catch(() => {
+    toast("Falha ao iniciar a coleta.", "bad");
+    b.disabled = false; b.textContent = "Rodar coleta agora";
+  });
+}
+
+function aguardarColeta(b){
+  b.innerHTML = '<span class="spin"></span>Coletando em background...';
+  const intervalo = setInterval(async () => {
+    let d;
+    try{
+      d = await (await fetch("/api/coletar/status")).json();
+    }catch(e){
+      clearInterval(intervalo);
+      b.disabled = false; b.textContent = "Rodar coleta agora";
+      return;
+    }
+    if (d.rodando) return;
+
+    clearInterval(intervalo);
+    const agora = new Date().toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"});
+    const ok = d.codigo_saida === 0;
+    COLETAS.unshift({
+      em: agora, ok,
+      msg: ok ? "Coleta concluída — dados atualizados." : `Coleta terminou com erro (código ${d.codigo_saida}).`,
+    });
+    COLETAS = COLETAS.slice(0,8);
+    toast(ok ? "Coleta concluída." : "Coleta terminou com erro.", ok ? "ok" : "bad");
+    await detectarBackend();
+    b.disabled = false; b.textContent = "Rodar coleta agora";
+  }, 5000);
+}
+
+/* Se a API local estiver no ar, usa os dados reais no lugar da demonstração. */
+async function detectarBackend(){
+  try{
+    const r = await fetch("/api/status", {signal:AbortSignal.timeout(6000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    BACKEND = true;
+    SESSAO = d.sessao; COLETAS = d.coletas;
+    PREGOES.length = 0; d.pregoes.forEach(p => PREGOES.push(p));
+    selecionado = PREGOES.some(p => p.numero === selecionado) ? selecionado : PREGOES[0]?.numero;
+    CARREGADO_EM = new Date();
+    renderTudo();
+  }catch(e){ /* segue em modo demonstração */ }
+}
+
+/* =======================================================================
+   6. INICIALIZAÇÃO
+   ======================================================================= */
+let CARREGADO_EM = new Date();
+function renderFrescor(){
+  const min = Math.max(0, Math.round((new Date() - CARREGADO_EM) / 60000));
+  const el = $("#frescorTexto");
+  if (el) el.textContent = min < 1 ? "Atualizado agora" : `Atualizado há ${min} min`;
+}
+setInterval(renderFrescor, 30000);
+
+function renderTudo(){
+  renderHero(); renderLista(); renderDetalhe(); renderStatsPregoes();
+  renderTabela(); renderAtas(); renderAlertas(); renderSessao(); renderFrescor();
+}
+renderTudo();
+detectarBackend();
+$("#gSenha").focus();
+</script>
+</body>
+</html>

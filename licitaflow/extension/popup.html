@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+<header>
+  <div class="marca">Licita<em>Flow</em></div>
+  <button id="btnConfig" class="icone" title="Configurações">⚙</button>
+</header>
+
+<div id="estado" class="estado">
+  <span class="pulso"></span>
+  <div>
+    <b id="estadoTitulo">Verificando...</b>
+    <div class="sub" id="estadoTexto">Lendo a aba ativa.</div>
+  </div>
+</div>
+
+<div id="contexto" class="contexto" hidden></div>
+
+<div id="resultado" class="resultado" hidden></div>
+
+<div id="ponte" class="ponte">
+  <div class="linha">
+    <span class="pulso" id="pontePulso"></span>
+    <b id="ponteTitulo">Ponte com o bot</b>
+    <button id="btnPonte" class="mini">Ligar</button>
+  </div>
+  <div class="sub" id="ponteTexto">Desligada. O bot não consegue usar sua sessão.</div>
+</div>
+
+<div class="acoes">
+  <button id="btnAbrir" class="btn">Abrir Compras.gov.br</button>
+  <button id="btnAnalisar" class="btn primario" disabled>Analisar pregão</button>
+  <button id="btnAtualizar" class="btn ghost">Verificar novamente</button>
+  <button id="btnDashboard" class="btn ghost">Abrir painel</button>
+</div>
+
+<section id="config" class="config" hidden>
+  <label for="cfgPonte">Endereço da ponte</label>
+  <input id="cfgPonte" placeholder="ws://localhost:8765/ws">
+  <label for="cfgUrl">URL da API (opcional)</label>
+  <input id="cfgUrl" placeholder="http://localhost:8000">
+  <label for="cfgFornecedor">Fornecedor acompanhado (opcional)</label>
+  <input id="cfgFornecedor" placeholder="Ex.: Alfa Suprimentos">
+  <button id="btnSalvarConfig" class="btn primario">Salvar</button>
+  <p class="nota">Sem URL configurada, nada sai do navegador: as leituras ficam
+  guardadas localmente e a fila aguarda o backend.</p>
+</section>
+
+<footer id="rodape">Nenhum dado enviado. <span id="filaInfo"></span></footer>
+
+<script type="module" src="popup.js"></script>
+</body>
+</html>

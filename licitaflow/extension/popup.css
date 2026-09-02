@@ -1,0 +1,73 @@
+:root{
+  --ink:#1C1D20; --paper:#F3F2F0; --surface:#fff; --line:#DDDBD7; --muted:#6E6B66;
+  --accent:#A85C36; --accent-dark:#8C4A2A; --accent-soft:#F6E9E1;
+  --olive:#3F7D5C; --olive-soft:#E2EFE8;
+  --amber:#7A5312; --amber-soft:#F8EEDA;
+  --rust:#AF4436; --rust-soft:#F8E5E1;
+}
+*{box-sizing:border-box}
+body{
+  width:340px;margin:0;padding:14px;background:var(--paper);color:var(--ink);
+  font-family:"Segoe UI",system-ui,Arial,sans-serif;font-size:13.5px;line-height:1.45;
+}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.marca{font-size:17px;font-weight:700;letter-spacing:-.02em}
+.marca em{font-style:normal;color:var(--accent)}
+.icone{border:0;background:none;font-size:16px;cursor:pointer;color:var(--muted);padding:2px 4px;border-radius:6px}
+.icone:hover{background:#0000000d}
+
+.estado{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:9px;border:1px solid var(--line);background:var(--surface)}
+.estado .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+.pulso{width:9px;height:9px;border-radius:50%;background:var(--muted);margin-top:5px;flex-shrink:0}
+.estado.ok{background:var(--olive-soft);border-color:#BFDACB}
+.estado.ok .pulso{background:var(--olive);box-shadow:0 0 0 3px #3f7d5c26}
+.estado.aviso{background:var(--amber-soft);border-color:#E8D4A8}
+.estado.aviso .pulso{background:var(--amber)}
+.estado.erro{background:var(--rust-soft);border-color:#EFC9C1}
+.estado.erro .pulso{background:var(--rust)}
+
+.contexto{margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:9px;font-size:12.5px}
+.contexto div{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+.contexto span{color:var(--muted)}
+.contexto b{font-weight:600;text-align:right}
+
+.resultado{margin-top:10px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.barra{height:7px;background:#E6E3DF;border-radius:99px;overflow:hidden;margin:8px 0 6px}
+.barra i{display:block;height:100%;background:var(--olive)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.chip{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:11.5px;font-weight:600;font-family:Consolas,monospace}
+.chip.ok{background:var(--olive);color:#fff}
+.chip.wait{background:var(--amber-soft);color:var(--amber);border:1px solid #E8D4A8}
+.chip.bad{background:var(--rust-soft);color:var(--rust);border:1px solid #EFC9C1}
+.trava{margin-top:10px;padding:9px 10px;border-radius:7px;font-size:12.5px;line-height:1.4}
+.trava.bloqueada{background:var(--rust-soft);color:#8A3428}
+.trava.liberada{background:var(--olive-soft);color:#2E5F45}
+.mudou{margin-top:8px;font-size:12px;color:var(--olive);font-weight:600}
+
+.ponte{margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.ponte .linha{display:flex;align-items:center;gap:8px}
+.ponte .linha b{flex:1;font-size:13px}
+.ponte .sub{color:var(--muted);font-size:12px;margin-top:4px;padding-left:17px}
+.ponte.on{background:var(--olive-soft);border-color:#BFDACB}
+.ponte.on .pulso{background:var(--olive);box-shadow:0 0 0 3px #3f7d5c26}
+.ponte.esperando{background:var(--amber-soft);border-color:#E8D4A8}
+.ponte.esperando .pulso{background:var(--amber)}
+.ponte .pulso{margin-top:0}
+.mini{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.mini:hover{background:#EEECE8}
+
+.acoes{display:grid;gap:6px;margin-top:12px}
+.btn{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font:inherit;font-weight:600;cursor:pointer;text-align:center}
+.btn:hover{background:#EEECE8}
+.btn.primario{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primario:hover{background:var(--accent-dark)}
+.btn.ghost{font-weight:500;color:var(--muted)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+.config{margin-top:12px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+.config label{display:block;font-size:12px;font-weight:600;margin:8px 0 4px}
+.config input{width:100%;padding:8px;border:1px solid var(--line);border-radius:7px;font:inherit}
+.config .btn{margin-top:10px;width:100%}
+.nota{font-size:11.5px;color:var(--muted);margin:10px 0 0;line-height:1.4}
+
+footer{margin-top:12px;font-size:11.5px;color:var(--muted);text-align:center}

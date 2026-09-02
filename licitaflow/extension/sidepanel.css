@@ -1,0 +1,13 @@
+@import url("popup.css");
+
+/* O popup tem largura fixa por ser um dropdown pequeno; o painel lateral
+   ocupa a largura que o Chrome reservar para ele, então isso é a única
+   diferença real de layout entre os dois. */
+body{
+  width:auto;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+}
+.acoes{margin-top:16px}
+footer{margin-top:auto;padding-top:16px}
