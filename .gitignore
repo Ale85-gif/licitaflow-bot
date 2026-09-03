@@ -1,10 +1,11 @@
 # Ambiente virtual
 .venv/
 
-# Estado interno do Claude Code
+# Estado interno do Claude Code / VS Code
 .claude/
+.vscode/
 
-# Credenciais e sessao (sensivel / gerado em runtime)
+# Credenciais e sessão (sensível / gerado em runtime)
 chaves.json
 *.key
 .env
@@ -13,13 +14,31 @@ chaves.json
 __pycache__/
 *.pyc
 
-# Logs de execucao
+# Logs de execução
 *.log
 logs/
 
 # Banco de dados local (dump dos dados coletados, gerado em runtime)
 *.db
 
-# Perfis de navegador / sessao local (gerados em runtime)
+# Perfis de navegador / sessão local (gerados em runtime)
 perfil_comprasnet/
 chrome-real/
+
+# PIDs de processos em segundo plano
+*.pid
+
+# Estado do LicitaFlow gerado em runtime (não é código)
+licitaflow/anexos/
+licitaflow/atas_geradas.json
+licitaflow/bot_controle.json
+licitaflow/verificacoes_empresas.json
+licitaflow/confirmacoes_manuais.json
+licitaflow/comprovantes_manuais/
+
+# Pasta de staging temporária (arquivos trazidos manualmente, já organizados)
+hoje/
+
+# Artefatos de teste/depuração (screenshots, checkpoints avulsos)
+_*.png
+_*.json
