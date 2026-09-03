@@ -7,6 +7,7 @@
 # Credenciais e sessao (sensivel / gerado em runtime)
 chaves.json
 *.key
+.env
 
 # Cache Python
 __pycache__/

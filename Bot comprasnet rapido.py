@@ -1,15 +1,22 @@
 import asyncio
+import os
 import re
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime, date
 from urllib.parse import urljoin
 
+import gspread
 import httpx
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from gspread.utils import rowcol_to_a1
 from playwright.async_api import async_playwright
+
+load_dotenv()
 
 from comum import (
     CHAVE_JSON,
@@ -64,6 +71,54 @@ MODALIDADE_ALVO = "05 - Pregão"
 UNIDADE_PMB = "160082 - PMB"
 
 SOMENTE_VIGENCIA_ATIVA = True
+
+SARP_SYNC_URL = os.getenv("SARP_SYNC_URL", "")
+SARP_SYNC_TOKEN = os.getenv("SARP_SYNC_TOKEN", "")
+
+# O Render suspende o serviço quando ocioso; a primeira chamada precisa
+# acordá-lo, e isso costuma levar quase um minuto.
+SARP_TIMEOUT_S = 120
+
+
+def avisar_sarp() -> None:
+    """
+    Avisa o SARP de que a planilha mudou, para ele sincronizar.
+
+    Nunca derruba a varredura: quando esta função roda a planilha já está
+    gravada, e falha de rede aqui não pode desfazer o trabalho feito.
+    """
+    if not SARP_SYNC_URL or not SARP_SYNC_TOKEN:
+        log("SARP nao avisado: SARP_SYNC_URL/TOKEN nao configurados no .env")
+        return
+
+    req = urllib.request.Request(
+        SARP_SYNC_URL,
+        data=b"",  # define o metodo como POST
+        headers={"X-Sync-Token": SARP_SYNC_TOKEN},
+    )
+
+    # Duas tentativas: a primeira costuma ser gasta acordando o serviço.
+    for tentativa in (1, 2):
+        try:
+            with urllib.request.urlopen(req, timeout=SARP_TIMEOUT_S) as resp:
+                log(f"SARP avisado - HTTP {resp.status}")
+                return
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                log("SARP sincronizou ha pouco - nada a fazer")
+            elif e.code == 409:
+                log("SARP ja esta sincronizando - nada a fazer")
+            elif e.code == 401:
+                log("SARP recusou o token - confira SARP_SYNC_TOKEN")
+            elif e.code == 404:
+                log("Rota nao existe - falta SYNC_WEBHOOK_TOKEN no Render")
+            else:
+                log(f"SARP recusou o aviso: HTTP {e.code}")
+            return  # resposta do servidor: nao insiste
+        except Exception as e:
+            log(f"Falha ao avisar o SARP (tentativa {tentativa}): {e}")
+
+    log("SARP nao foi avisado. A planilha esta correta; o SARP atualiza depois.")
 
 PAUSA_SHEETS = 2.0
 PAUSA_NAVEGACAO = 2.2
@@ -364,6 +419,59 @@ def salvar_status_controle_bot(planilha, pregao: str, status: str) -> None:
 
     except Exception as e:
         log(f"Falha ao salvar CONTROLE_BOT para {pregao}: {e}")
+
+
+def desnormalizar_nome_aba_pregao(nome_aba: str) -> str:
+    """Inverte nome_limpo()/normalizar_nome_aba_pregao() para abas de
+    pregão (formato "90020_2026" -> "90020/2026"). Sem isso, o status
+    salvo em CONTROLE_BOT fica sob uma chave ("90020_2026") diferente da
+    usada em toda consulta ao controle ("90020/2026", vindo direto da
+    listagem do portal) e nunca é encontrado de novo."""
+    m = re.match(r"^(\d+)_(\d{4})$", nome_aba)
+    return f"{m.group(1)}/{m.group(2)}" if m else nome_aba
+
+
+# =========================================================
+# TRAVA DE EXECUÇÃO (numa célula da planilha -- nunca em arquivo local:
+# o bot roda o agendador do Windows em mais de uma máquina/sessão em
+# potencial, e um arquivo de trava só protegeria uma máquina)
+# =========================================================
+
+CELULA_TRAVA_EXECUCAO = "E1"
+MINUTOS_TRAVA_ORFA = 120  # acima disso, assume que o processo anterior travou/caiu
+
+
+def verificar_e_travar_execucao(planilha) -> bool:
+    """Retorna True se conseguiu travar (pode prosseguir). Retorna False
+    se já existe uma execução recente em andamento -- quem chamar deve
+    abortar sem rodar a varredura, para não haver duas rodadas
+    escrevendo na planilha ao mesmo tempo."""
+    ws = get_or_create_worksheet(planilha, "CONTROLE_BOT", rows=5000, cols=5)
+    valor_atual = normalizar_espacos(ws.acell(CELULA_TRAVA_EXECUCAO).value or "")
+
+    if valor_atual:
+        try:
+            inicio = datetime.strptime(valor_atual, "%d/%m/%Y %H:%M:%S")
+            minutos_passados = (datetime.now() - inicio).total_seconds() / 60
+        except ValueError:
+            minutos_passados = None  # valor ilegível na célula -- trata como trava órfã, não bloqueia pra sempre
+
+        if minutos_passados is None or minutos_passados < MINUTOS_TRAVA_ORFA:
+            log(f"Execução já em andamento (iniciada em {valor_atual}) -- abortando para não rodar em paralelo.")
+            return False
+
+        log(f"Trava órfã encontrada (iniciada em {valor_atual}, há mais de {MINUTOS_TRAVA_ORFA} min) -- assumindo travamento anterior e seguindo.")
+
+    update_com_retry(ws, CELULA_TRAVA_EXECUCAO, [[datetime.now().strftime("%d/%m/%Y %H:%M:%S")]])
+    return True
+
+
+def liberar_trava_execucao(planilha) -> None:
+    try:
+        ws = get_or_create_worksheet(planilha, "CONTROLE_BOT", rows=5000, cols=5)
+        update_com_retry(ws, CELULA_TRAVA_EXECUCAO, [[""]])
+    except Exception as e:
+        log(f"Falha ao liberar a trava de execução: {e}")
 
 
 def listar_abas_existentes(planilha) -> dict:
@@ -1101,6 +1209,28 @@ async def extrair_detalhe_pregao(page, detalhe_url: str) -> dict:
 # NOVA ROTINA: LIMPEZA DE ABAS E ITENS VENCIDOS NA PLANILHA
 # =========================================================
 
+def zerar_itens_da_aba(ws) -> None:
+    """Zera (A:N) todas as linhas de item de uma aba de pregão, mantendo
+    a aba e o cabeçalho -- nunca apaga a aba. Reaproveitada tanto pela
+    faxina periódica (fazer_limpeza_atas_vencidas) quanto pelo caminho
+    de "pregão sem itens ativos após varredura completa"."""
+    valores = ws.get_all_values()
+
+    linha_cab = -1
+    for i, linha in enumerate(valores):
+        if "Vig Fim" in linha:
+            linha_cab = i
+            break
+
+    if linha_cab == -1:
+        return  # não tem a estrutura esperada de itens, nada a zerar
+
+    primeira_linha_dado = linha_cab + 2  # 1-indexado, logo após o cabeçalho
+    ultima_linha_dado = len(valores)     # 1-indexado, última linha existente
+    if ultima_linha_dado >= primeira_linha_dado:
+        ws.batch_clear([f"A{primeira_linha_dado}:N{ultima_linha_dado}"])
+
+
 def fazer_limpeza_atas_vencidas(planilha):
     log("Iniciando varredura para limpeza de ITENS e ABAS vencidas na planilha (com base na data de hoje)...")
     try:
@@ -1108,8 +1238,13 @@ def fazer_limpeza_atas_vencidas(planilha):
 
         for ws in abas:
             nome = ws.title.strip()
-            # Ignora as abas de sistema (BD_CONSOLIDADO, INDICE, CONTROLE, etc)
-            if nome in ABAS_FIXAS:
+            # Lista de PERMISSÃO (não de exclusão): só mexe em abas cujo
+            # nome bate com o padrão de aba de pregão ("90020_2026",
+            # mesmo regex de listar_abas_existentes()). Qualquer outra
+            # aba -- inclusive PARTICIPAÇÃO e qualquer aba nova que
+            # apareça no futuro -- fica de fora por padrão, sem precisar
+            # ser adicionada a uma lista crescente de exceções.
+            if not re.match(r"^\d+_\d{4}$", nome):
                 continue
 
             try:
@@ -1139,46 +1274,41 @@ def fazer_limpeza_atas_vencidas(planilha):
                 if idx_vig_fim == -1 or linha_cab == -1:
                     continue  # Não tem a estrutura esperada de itens, pula.
 
-                linhas_para_excluir = []
+                linhas_para_zerar = []
                 tem_ativo = False
 
-                # Checa as datas linha por linha, de baixo para cima (para poder deletar sem quebrar os índices)
-                for i in range(len(valores) - 1, linha_cab, -1):
+                # Checa as datas linha por linha
+                for i in range(linha_cab + 1, len(valores)):
                     linha = valores[i]
                     if len(linha) > idx_vig_fim and normalizar_espacos(linha[idx_vig_fim]):
                         dt = parse_data_br(linha[idx_vig_fim])
-                        if dt and dt >= date.today():
+                        if dt is None:
+                            # Data ilegível -- NÃO é a mesma coisa que vencida.
+                            # Não sabemos o status real, então não mexe na
+                            # linha (trata como presente/ativa pra fins de
+                            # decidir se a aba inteira "venceu").
+                            tem_ativo = True
+                        elif dt >= date.today():
                             tem_ativo = True
                         else:
-                            # Item venceu (a data passou ou é inválida) -> marca a linha para exclusão
-                            linhas_para_excluir.append(i)
+                            # Item genuinamente venceu (data passada e válida) -> zera a linha
+                            linhas_para_zerar.append(i)
 
-                # Se não tem NENHUM item ativo sobrou, a ata inteira venceu
+                # Se não tem NENHUM item ativo (nem ilegível) sobrou, a ata inteira venceu.
+                # Nunca apaga a aba -- só zera as linhas de dado, mantendo a
+                # aba e o cabeçalho intactos (histórico/auditoria).
                 if not tem_ativo:
-                    planilha.del_worksheet(ws)
-                    salvar_status_controle_bot(planilha, nome, "VENCIDO")
-                    log(f"🧹 Aba 100% vencida EXCLUÍDA: {nome}")
+                    zerar_itens_da_aba(ws)
+                    salvar_status_controle_bot(planilha, desnormalizar_nome_aba_pregao(nome), "VENCIDO")
+                    log(f"🧹 Aba 100% vencida ZERADA (A:N, aba mantida): {nome}")
                     time.sleep(2)
 
-                # Se tem itens ativos, mas também encontrou itens vencidos isolados
-                elif linhas_para_excluir:
-                    requests = []
-                    for idx_linha in linhas_para_excluir:
-                        requests.append({
-                            "deleteDimension": {
-                                "range": {
-                                    "sheetId": ws.id,
-                                    "dimension": "ROWS",
-                                    "startIndex": idx_linha,
-                                    "endIndex": idx_linha + 1
-                                }
-                            }
-                        })
-
-                    if requests:
-                        ws.spreadsheet.batch_update({"requests": requests})
-                        log(f"🧹 {len(requests)} item(ns) vencido(s) apagado(s) da aba ativa: {nome}")
-                        time.sleep(PAUSA_SHEETS)
+                # Se tem itens ativos (ou ilegíveis), mas também encontrou itens vencidos isolados
+                elif linhas_para_zerar:
+                    ranges = [f"A{idx_linha + 1}:N{idx_linha + 1}" for idx_linha in linhas_para_zerar]
+                    ws.batch_clear(ranges)
+                    log(f"🧹 {len(ranges)} item(ns) vencido(s) ZERADO(S) (A:N) na aba ativa: {nome}")
+                    time.sleep(PAUSA_SHEETS)
 
             except Exception as e:
                 log(f"Falha ao inspecionar aba {nome} para limpeza: {e}")
@@ -1491,12 +1621,12 @@ async def processar_pregao(page, planilha, reg: dict):
                 )
                 return None
 
-            log("⚠ Pregão sem itens ativos após varredura completa e sem erros de extração. Garantindo que a aba não exista...")
+            log("⚠ Pregão sem itens ativos após varredura completa e sem erros de extração. Zerando os itens da aba (aba mantida, nunca apagada)...")
             try:
                 aba_vencida = planilha.worksheet(nome_limpo(numero_ano))
-                planilha.del_worksheet(aba_vencida)
-                log(f"Aba do pregão {numero_ano} deletada.")
-            except Exception:
+                zerar_itens_da_aba(aba_vencida)
+                log(f"Itens da aba do pregão {numero_ano} zerados (A:N).")
+            except gspread.exceptions.WorksheetNotFound:
                 pass
             salvar_status_controle_bot(planilha, numero_ano, "VENCIDO")
             return None
@@ -1532,10 +1662,16 @@ async def processar_pregao(page, planilha, reg: dict):
 # =========================================================
 
 async def main():
+    planilha = None
+    trava_adquirida = False
     try:
         abrir_chrome()
         planilha = conectar_google()
         testar_google(planilha)
+
+        trava_adquirida = verificar_e_travar_execucao(planilha)
+        if not trava_adquirida:
+            return
 
         # Roda a limpeza profunda das abas fisicamente vencidas direto na planilha, antes de abrir o Playwright
         fazer_limpeza_atas_vencidas(planilha)
@@ -1592,6 +1728,9 @@ async def main():
                 # 2. Descarrega todos os itens de forma corrida na base crua (Banco de Dados)
                 atualizar_aba_banco_dados(planilha, registros_indice)
 
+                # 3. Avisa o SARP para sincronizar (nunca derruba a varredura se falhar)
+                avisar_sarp()
+
             log("Processo finalizado com sucesso.")
             return
 
@@ -1604,6 +1743,13 @@ async def main():
         except Exception:
             pass
         sys.exit(1)
+
+    finally:
+        # Libera a trava só se foi ESTA execução que a adquiriu -- se
+        # abortamos cedo porque já havia outra rodando, não pode liberar
+        # a trava de quem ainda está rodando.
+        if planilha and trava_adquirida:
+            liberar_trava_execucao(planilha)
 
 
 if __name__ == "__main__":
