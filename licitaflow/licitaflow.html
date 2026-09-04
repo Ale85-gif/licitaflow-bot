@@ -770,6 +770,122 @@ async function garantirProcesso(numero){
   if (selecionado === numero) renderDetalhe();
 }
 
+/* ETAPA 2 (Checkpoint 5): preparação real das Atas de um processo
+   confirmado. numero do pregão -> {rodando, eventos, atas, concluido,
+   resultado} — tudo vindo de verdade do /api/processos/{id}/atas/preparar,
+   nunca fabricado aqui. */
+let preparoAtas = {};
+
+const ROTULO_EVENTO_PREPARO = {
+  processo_validado: "Processo validado",
+  modelo_identificado: "Modelo identificado",
+  fornecedores_identificados: "Fornecedores identificados",
+  itens_analisados: "Itens analisados",
+  preparando_atas: "Preparando Atas...",
+};
+
+function renderPreparoAtasBox(numero){
+  const box = $("#preparoAtasBox");
+  if (!box) return;
+  const estado = preparoAtas[numero];
+
+  if (!estado){
+    box.innerHTML = `
+      <div class="actions" style="margin-top:8px">
+        <button class="btn" onclick="iniciarPreparoAtas('${numero}')">📄 Preparar Atas</button>
+      </div>`;
+    return;
+  }
+
+  if (!estado.concluido){
+    const checklist = (estado.eventos || []).map(ev => {
+      const extra = ev.quantidade !== undefined ? ` (${ev.quantidade})` : ev.modelo ? ` (${esc(ev.modelo)})` : "";
+      const emAndamento = ev.evento === "preparando_atas";
+      return `<div>${emAndamento ? "⏳" : "✓"} ${esc(ROTULO_EVENTO_PREPARO[ev.evento] || ev.evento)}${extra}</div>`;
+    }).join("");
+    const atasProntas = (estado.atas || []).length ? `
+      <div class="legend-hint" style="margin-top:8px">Atas já preparadas nesta execução:</div>
+      ${estado.atas.map(a => `<div class="kv"><span>${esc(a.fornecedor)}</span><b class="mono">${esc(a.ata || "—")} · ${esc(a.status)}</b></div>`).join("")}
+    ` : "";
+    box.innerHTML = `<div class="lock wait"><b>Preparando Atas...</b>${checklist}${atasProntas}</div>`;
+    return;
+  }
+
+  const resultado = estado.resultado;
+  if (!resultado || resultado.estado === "erro"){
+    box.innerHTML = `
+      <div class="lock bad"><b>Falha ao preparar Atas.</b> ${esc((resultado && resultado.motivo) || "Erro desconhecido — confira o log.")}
+        <div class="actions" style="margin-top:8px"><button class="btn ghost" onclick="iniciarPreparoAtas('${numero}')">Tentar novamente</button></div>
+      </div>`;
+    return;
+  }
+
+  const linhas = resultado.atas.map(a => `
+    <div class="kv">
+      <span>${esc(a.fornecedor)} <span class="mono" style="color:var(--muted)">· ${esc(a.cnpj)}</span><br>
+        <span style="font-size:12.5px;color:var(--muted)">${a.itens} ${a.itens === 1 ? "item" : "itens"} · Ata ${esc(a.identificador || "—")}</span>
+      </span>
+      <span class="tag ${a.estado === "RASCUNHO" ? "ok" : "wait"}">${a.estado === "RASCUNHO" ? "🟢" : "🟡"} ${esc(a.estado)}</span>
+    </div>
+    ${a.estado !== "RASCUNHO" && (a.divergencias || []).length ? `
+      <div class="lock bad" style="margin:6px 0 10px">
+        <b>Divergências encontradas — revisão humana necessária:</b>
+        <ul style="margin:6px 0 0 18px;padding:0">${a.divergencias.map(d => `<li>${esc(d)}</li>`).join("")}</ul>
+      </div>` : ""}
+  `).join("");
+
+  box.innerHTML = `
+    <div class="lock ok"><b>PREPARAÇÃO CONCLUÍDA</b> — ${resultado.atas.length} ata${resultado.atas.length === 1 ? "" : "s"} preparada${resultado.atas.length === 1 ? "" : "s"}. Nenhuma foi concluída/publicada — todas aguardam revisão humana.</div>
+    ${linhas}
+    <div class="actions" style="margin-top:8px"><button class="btn ghost" onclick="iniciarPreparoAtas('${numero}')">Preparar novamente</button></div>
+  `;
+}
+
+async function iniciarPreparoAtas(numero){
+  const processoId = processoConfirmado[numero]?.processoId;
+  if (!processoId){ toast("Confirme o processo antes de preparar Atas.", "bad"); return; }
+  if (!BACKEND){ toast("Preparar Atas exige a API local rodando.", "bad"); return; }
+
+  try{
+    const r = await fetch(`/api/processos/${encodeURIComponent(processoId)}/atas/preparar`, {method:"POST"});
+    const d = await r.json();
+    if (!d.ok){
+      const mensagens = {
+        processo_nao_confirmado: "Processo não confirmado — identifique-o novamente.",
+        preparo_em_andamento: "Já existe uma preparação de Atas rodando.",
+        chrome_nao_conectado: "Conecte o Chrome da automação antes de preparar Atas.",
+      };
+      toast(mensagens[d.erro] || d.detalhe || "Não foi possível iniciar a preparação.", "bad");
+      return;
+    }
+    toast("Preparação de Atas iniciada.", "ok");
+    preparoAtas[numero] = {rodando:true, eventos:[], atas:[], concluido:false, resultado:null};
+    renderPreparoAtasBox(numero);
+    pollPreparoAtas(numero, processoId);
+  }catch(e){
+    toast("Falha ao iniciar a preparação de Atas.", "bad");
+  }
+}
+
+function pollPreparoAtas(numero, processoId){
+  const intervalo = setInterval(async () => {
+    let d;
+    try{
+      d = await (await fetch(`/api/processos/${encodeURIComponent(processoId)}/atas/preparar/status`)).json();
+    }catch(e){
+      clearInterval(intervalo);
+      return;
+    }
+    preparoAtas[numero] = d;
+    if (selecionado === numero) renderPreparoAtasBox(numero);
+    if (d.concluido){
+      clearInterval(intervalo);
+      const deuErro = d.resultado && d.resultado.estado === "erro";
+      toast(deuErro ? "Preparação terminou com erro." : "Preparação de Atas concluída.", deuErro ? "bad" : "ok");
+    }
+  }, 3000);
+}
+
 function totais(){
   return {
     pregoes: PREGOES.length,
@@ -904,6 +1020,11 @@ function renderDetalhe(){
         </div>
       `}
 
+      ${processoConfirmado[p.numero] ? `
+        <div class="eyebrow" style="margin-top:18px">Preparação de Atas</div>
+        <div id="preparoAtasBox"></div>
+      ` : ""}
+
       <div class="eyebrow" style="margin-top:18px">Gerar ata com itens prontos</div>
       <div class="legend-hint">Use quando a ata do fornecedor está incompleta: gere agora com o que já foi homologado e gere outra depois para o restante.</div>
       ${modoSelecaoAta ? `
@@ -945,6 +1066,7 @@ function renderDetalhe(){
 
   renderTR(p);
   renderFluxo(p);
+  renderPreparoAtasBox(p.numero);
 }
 
 function renderTR(p){

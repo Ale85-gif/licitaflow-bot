@@ -72,9 +72,12 @@ PYTHON_VENV = r"C:\venvs\meu_projeto_python\Scripts\python.exe"
 BOT_COLETA = RAIZ / "Bot comprasnet rapido.py"
 ABRIR_LICITAFLOW = RAIZ / "abrir_licitaflow.py"
 CAPTURAR_FASE = RAIZ / "capturar_fase.py"
+PREPARAR_ATAS_SCRIPT = RAIZ / "preparar_atas_processo.py"
 COLETA_LOG = RAIZ / "logs" / "coleta_painel.log"
 CONECTAR_LOG = RAIZ / "logs" / "conectar_painel.log"
 FASE_LOG = RAIZ / "logs" / "fase_painel.log"
+PREPARAR_ATAS_LOG = RAIZ / "logs" / "preparar_atas_painel.log"
+PREPARAR_ATAS_STATUS_ARQUIVO = RAIZ / "logs" / "preparar_atas_status.json"
 CDP_URL = "http://127.0.0.1:9222/json/version"
 DB_PATH = RAIZ / "dados.db"
 
@@ -83,6 +86,7 @@ app = FastAPI(title="LicitaFlow")
 _cache: dict = {"em": None, "pregoes": []}
 _coleta_processo: Optional[subprocess.Popen] = None
 _conectar_processo: Optional[subprocess.Popen] = None
+_preparar_atas_processo: Optional[subprocess.Popen] = None
 
 
 def _chrome_debug_ativo() -> bool:
@@ -510,6 +514,103 @@ def confirmar_processo(corpo: dict):
 def processo_por_pregao(numero: str):
     processo = processos_repo.processo_confirmado_para(numero)
     return {"processo": processo}
+
+
+# ── ETAPA 2 (Checkpoint 5): preparação real das Atas de um processo ─────────
+# api.py só valida contexto, inicia preparar_atas_processo.py em background
+# e lê o que ele escreve — a orquestração de verdade (Checkpoints 1-4) mora
+# inteira em bot_criar_ata.py/processos_repo.py, nunca duplicada aqui.
+
+def _ler_relatorio_csv(processo_id: str) -> list[dict]:
+    """Lê o CSV que criar_atas_todos_fornecedores já grava incrementalmente
+    (fornecedor/cnpj/ata/status) depois de CADA fornecedor processado —
+    é daí que vem o progresso real "durante" a preparação, sem precisar
+    duplicar nada dentro de bot_criar_ata.py."""
+    caminho = RAIZ / "logs" / f"preparar_atas_{processo_id}.csv"
+    if not caminho.exists():
+        return []
+    import csv as csv_mod
+    with caminho.open(newline="", encoding="utf-8") as f:
+        return list(csv_mod.DictReader(f, delimiter=","))
+
+
+def _acompanhar_preparo_atas(processo: subprocess.Popen, log_arquivo) -> None:
+    """Roda numa thread separada — só espera o subprocesso terminar e
+    fecha o log. O histórico persistido (licitaflow/preparacoes_atas.json)
+    já é gravado pelo próprio preparar_atas_processo.py ao final, não
+    duplicado aqui."""
+    processo.wait()
+    log_arquivo.close()
+
+
+@app.post("/api/processos/{processo_id}/atas/preparar")
+def preparar_atas(processo_id: str):
+    global _preparar_atas_processo
+
+    # Backend é a autoridade — valida de novo aqui, nunca confia que o
+    # frontend só mostrou o botão porque "achava" que o processo tava
+    # confirmado. Bloqueia mesmo que alguém chame o endpoint direto.
+    try:
+        processos_repo.validar_processo(processo_id)
+    except processos_repo.ProcessoNaoConfirmado:
+        return JSONResponse({"ok": False, "erro": "processo_nao_confirmado"}, status_code=409)
+
+    if _preparar_atas_processo is not None and _preparar_atas_processo.poll() is None:
+        return JSONResponse(
+            {"ok": False, "erro": "preparo_em_andamento", "detalhe": "Já existe uma preparação de Atas rodando."},
+            status_code=409,
+        )
+
+    if not _chrome_debug_ativo():
+        return JSONResponse(
+            {"ok": False, "erro": "chrome_nao_conectado", "detalhe": "Conecte o Chrome da automação antes de preparar Atas."},
+            status_code=409,
+        )
+
+    # Zera o status desta execução — o painel não deve ver eventos de uma
+    # preparação anterior misturados com a atual.
+    PREPARAR_ATAS_STATUS_ARQUIVO.parent.mkdir(parents=True, exist_ok=True)
+    PREPARAR_ATAS_STATUS_ARQUIVO.write_text(
+        json.dumps({"processoId": processo_id, "eventos": [], "concluido": False, "resultado": None}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    PREPARAR_ATAS_LOG.parent.mkdir(exist_ok=True)
+    log_arquivo = open(PREPARAR_ATAS_LOG, "w", encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+    _preparar_atas_processo = subprocess.Popen(
+        [PYTHON_VENV, str(PREPARAR_ATAS_SCRIPT), processo_id],
+        cwd=str(RAIZ),
+        stdout=log_arquivo,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+    threading.Thread(
+        target=_acompanhar_preparo_atas, args=(_preparar_atas_processo, log_arquivo), daemon=True
+    ).start()
+
+    return {"ok": True, "detalhe": "Preparação de Atas iniciada em background."}
+
+
+@app.get("/api/processos/{processo_id}/atas/preparar/status")
+def preparar_atas_status(processo_id: str):
+    rodando = _preparar_atas_processo is not None and _preparar_atas_processo.poll() is None
+
+    status = {"processoId": processo_id, "eventos": [], "concluido": False, "resultado": None}
+    if PREPARAR_ATAS_STATUS_ARQUIVO.exists():
+        try:
+            status = json.loads(PREPARAR_ATAS_STATUS_ARQUIVO.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    return {
+        "rodando": rodando,
+        "eventos": status.get("eventos", []),
+        "atas": _ler_relatorio_csv(processo_id),
+        "concluido": status.get("concluido", False),
+        "resultado": status.get("resultado"),
+    }
 
 
 def _aplicar_confirmacoes_manuais(cnpj: str, resultados: list[dict]) -> None:
