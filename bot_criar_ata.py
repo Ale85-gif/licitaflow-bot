@@ -892,11 +892,45 @@ async def coletar_fornecedores_itens_do_processo(
 # não precisa de nenhuma navegação extra depois do clique.
 
 
-async def clonar_ata_modelo(page) -> str:
+def obter_modelo_ata(processo_id: str) -> dict:
+    """ETAPA 2 (Checkpoint 3): determina qual Ata-modelo deve ser
+    clonada para esse `processo_id`.
+
+    Valida o processo_id (processos_repo.validar_processo — nunca
+    recebe e ignora) e deriva o pregão do próprio processo validado,
+    nunca de parâmetro solto. Por enquanto SEMPRE retorna o modelo fixo
+    (ARTEFATO_MODELO_NUMERO/ANO, a Ata 279) — não existe ainda nenhuma
+    regra real de "modelo por pregão" (isso exigiria descobrir
+    automaticamente no Compras.gov.br qual é o modelo certo de cada
+    pregão, o que não foi investigado; não inventar essa regra).
+
+    A comparação ao vivo entre a Ata 279 e a Ata 283 (Etapa 2,
+    investigação) confirmou que esse modelo fixo tem a estrutura
+    esperada para o pregão 44/2026 — mas isso NÃO é garantia geral pra
+    qualquer outro pregão (a Ata 267 já mostrou um clone com estrutura
+    diferente). Esta função existe pra isolar essa decisão num único
+    lugar: no futuro, uma regra real de seleção por pregão troca só o
+    corpo desta função, sem precisar mexer em quem chama.
+
+    Retorna {"numero", "ano", "numero_pregao"} — `numero_pregao` é só
+    contexto (não influencia a escolha ainda)."""
+    processo = processos_repo.validar_processo(processo_id)
+    return {
+        "numero": ARTEFATO_MODELO_NUMERO,
+        "ano": ARTEFATO_MODELO_ANO,
+        "numero_pregao": processo["pregaoCompleto"],
+    }
+
+
+async def clonar_ata_modelo(
+    page, numero_modelo: str = ARTEFATO_MODELO_NUMERO, ano_modelo: str = ARTEFATO_MODELO_ANO,
+) -> str:
     """Clica em 'Clonar' (ícone fa-copy) na linha do artefato MODELO
-    (ARTEFATO_MODELO_NUMERO/ARTEFATO_MODELO_ANO, isto é, a Ata 279) na
-    tela de listagem de Artefatos Digitais. NUNCA clica em Editar nessa
-    linha — só em Clonar, pra nunca alterar o modelo original.
+    (por padrão ARTEFATO_MODELO_NUMERO/ARTEFATO_MODELO_ANO, isto é, a
+    Ata 279 — mas aceita outro modelo via `numero_modelo`/`ano_modelo`,
+    ver obter_modelo_ata) na tela de listagem de Artefatos Digitais.
+    NUNCA clica em Editar nessa linha — só em Clonar, pra nunca alterar
+    o modelo original.
 
     Deve ser chamada com `page` já na tela de listagem
     (.../comprasnet-artefatos-web/leitor-artefato).
@@ -905,7 +939,7 @@ async def clonar_ata_modelo(page) -> str:
     extraído da URL depois que o sistema navega automaticamente pro
     editor dele.
     """
-    identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
+    identificador_modelo = f"{numero_modelo}/{ano_modelo}"
 
     # A listagem é paginada, com ordenação que não é puramente
     # cronológica nem numérica — confirmado em teste real que o
@@ -921,7 +955,7 @@ async def clonar_ata_modelo(page) -> str:
         raise RuntimeError("Não achei o campo de busca da listagem de Artefatos Digitais.")
 
     await campo_busca.click()
-    await campo_busca.fill(ARTEFATO_MODELO_NUMERO)
+    await campo_busca.fill(numero_modelo)
     await campo_busca.press("Enter")
     await page.wait_for_timeout(4000)
 
@@ -936,7 +970,7 @@ async def clonar_ata_modelo(page) -> str:
     except Exception:
         raise RuntimeError(
             f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais "
-            f"mesmo após buscar por {ARTEFATO_MODELO_NUMERO!r}."
+            f"mesmo após buscar por {numero_modelo!r}."
         )
 
     linha_container = linha_num.locator("xpath=ancestor::tr[1]")
@@ -1670,7 +1704,11 @@ async def criar_ata_fornecedor(
     processo = processos_repo.validar_processo(processo_id)
     numero_pregao = processo["pregaoCompleto"]
 
-    identificador = await clonar_ata_modelo(page)
+    # Checkpoint 3: qual modelo clonar passa a ser decidido por
+    # obter_modelo_ata (hoje sempre 279 — ver docstring dela), não mais
+    # lido direto das constantes do módulo dentro de clonar_ata_modelo.
+    modelo = obter_modelo_ata(processo_id)
+    identificador = await clonar_ata_modelo(page, modelo["numero"], modelo["ano"])
 
     # As tabelas de Quantidade Mínima/Máxima ficam na seção
     # "GERENCIADOR" (ÓRGÃO(S) GERENCIADOR E PARTICIPANTE(S)), não na
