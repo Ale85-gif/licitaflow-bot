@@ -416,7 +416,7 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
         <section class="panel">
           <div class="head">
             <h2>Pregões em acompanhamento</h2>
-            <button class="btn" onclick="abrirModal()">+ Acompanhar pregão</button>
+            <button class="btn" onclick="abrirModal()">+ Identificar processo</button>
           </div>
           <div class="search">
             <input id="filtro" type="search" placeholder="Filtrar por número, objeto ou fornecedor..."
@@ -596,23 +596,34 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
   <div class="box">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
       <div>
-        <h2 id="modalTitulo">Acompanhar pregão</h2>
-        <p style="color:var(--muted);font-size:13.5px;margin:4px 0 0">Informe o número do artefato para localizar o Termo de Referência.</p>
+        <h2 id="modalTitulo">Identificação do Processo</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:4px 0 0">Informe o Pregão e o Termo de Referência antes de liberar a geração da Ata — impede misturar dados de processos diferentes.</p>
       </div>
       <button class="btn ghost" onclick="fecharModal()">Fechar</button>
     </div>
 
     <div class="field">
       <label for="uasg">UASG</label>
-      <input id="uasg" class="mono" value="160082" inputmode="numeric">
+      <input id="uasg" class="mono" value="160082" inputmode="numeric" readonly>
     </div>
-    <div class="field" id="fArtefato">
-      <label for="artefato">Número do artefato</label>
-      <input id="artefato" class="mono" placeholder="Ex.: 123456" inputmode="numeric"
+    <div class="field" id="fPregao">
+      <label for="campoPregao">Número do Pregão</label>
+      <input id="campoPregao" class="mono" placeholder="Ex.: 90020/2026"
              onkeydown="if(event.key==='Enter')pesquisar()">
-      <div class="hint" id="hintArtefato">Somente números, como aparece no Compras.gov.br.</div>
+      <div class="hint" id="hintPregao">Formato número/ano, como aparece no painel.</div>
     </div>
-    <button class="btn" id="btnBuscar" onclick="pesquisar()">Pesquisar artefato</button>
+    <div class="field" id="fTR">
+      <label for="campoTR">Número do Termo de Referência</label>
+      <input id="campoTR" class="mono" placeholder="Ex.: 12/2026"
+             onkeydown="if(event.key==='Enter')pesquisar()">
+      <div class="hint" id="hintTR">Formato número/ano.</div>
+    </div>
+    <div class="field">
+      <label for="campoProcesso">Processo Administrativo (opcional)</label>
+      <input id="campoProcesso" class="mono" placeholder="Ex.: 64482.001554/2026-89"
+             onkeydown="if(event.key==='Enter')pesquisar()">
+    </div>
+    <button class="btn" id="btnBuscar" onclick="pesquisar()">Localizar processo</button>
     <div id="resultado" style="margin-top:16px"></div>
   </div>
 </div>
@@ -744,6 +755,20 @@ function toast(msg, tipo=""){
 let selecionado = PREGOES[0].numero;
 let modoSelecaoAta = false;
 let itensSelecionados = new Set();
+// numero do pregão -> processo confirmado ({tr, numeroProcesso, processoId, ...}) | null (já checado, não tem) | undefined (ainda não checado)
+let processoConfirmado = {};
+
+async function garantirProcesso(numero){
+  if (!BACKEND || numero in processoConfirmado) return;
+  try{
+    const r = await fetch(`/api/processos/por-pregao/${encodeURIComponent(numero)}`);
+    const d = await r.json();
+    processoConfirmado[numero] = d.processo || null;
+  }catch(e){
+    processoConfirmado[numero] = null;
+  }
+  if (selecionado === numero) renderDetalhe();
+}
 
 function totais(){
   return {
@@ -794,6 +819,7 @@ function itensCobertos(p){
 
 function renderDetalhe(){
   const p = PREGOES.find(x => x.numero === selecionado);
+  garantirProcesso(p.numero);
   const s = situacaoAta(p), pend = pendentes(p);
   const cobertos = itensCobertos(p);
   const disponiveis = p.itens.filter(i => i.status === "ok" && !cobertos.has(i.n));
@@ -869,6 +895,15 @@ function renderDetalhe(){
         <span><i style="background:var(--rust-soft);border:1px solid #EFC9C1"></i>× Diligência / recurso</span>
       </div>
 
+      <div class="eyebrow" style="margin-top:18px">Identificação do Processo</div>
+      ${processoConfirmado[p.numero] ? `
+        <div class="kv"><span>Processo confirmado</span><b class="mono">TR ${esc(processoConfirmado[p.numero].tr || "—")}${processoConfirmado[p.numero].numeroProcesso ? ` · ${esc(processoConfirmado[p.numero].numeroProcesso)}` : ""}</b></div>
+      ` : `
+        <div class="lock bad"><b>Processo não identificado.</b> Confirme o Pregão + TR antes de gerar Ata.
+          <div class="actions" style="margin-top:8px"><button class="btn ghost" onclick="abrirModal('${p.numero}')">Identificar processo</button></div>
+        </div>
+      `}
+
       <div class="eyebrow" style="margin-top:18px">Gerar ata com itens prontos</div>
       <div class="legend-hint">Use quando a ata do fornecedor está incompleta: gere agora com o que já foi homologado e gere outra depois para o restante.</div>
       ${modoSelecaoAta ? `
@@ -876,12 +911,13 @@ function renderDetalhe(){
           <span><b>${itensSelecionados.size}</b> selecionado${itensSelecionados.size === 1 ? "" : "s"}</span>
           <span style="display:flex;gap:8px">
             <button class="btn ghost" onclick="cancelarSelecaoAta()">Cancelar</button>
-            <button class="btn" ${itensSelecionados.size ? "" : "disabled"} onclick="confirmarAtaManual('${p.numero}')">Gerar ata com selecionados</button>
+            <button class="btn" ${itensSelecionados.size && processoConfirmado[p.numero] ? "" : "disabled"} onclick="confirmarAtaManual('${p.numero}')">Gerar ata com selecionados</button>
           </span>
         </div>` : `
         <div class="actions" style="margin-top:8px">
           <button class="btn ghost" ${disponiveis.length ? "" : "disabled"} onclick="iniciarSelecaoAta()">Selecionar itens manualmente</button>
-          <button class="btn" ${disponiveis.length ? "" : "disabled"}
+          <button class="btn" ${disponiveis.length && processoConfirmado[p.numero] ? "" : "disabled"}
+                  title="${processoConfirmado[p.numero] ? "" : "Confirme o processo (Pregão + TR) antes de gerar"}"
                   onclick="gerarAta('${p.numero}', [${disponiveis.map(i => i.n).join(",")}])">
             Gerar ata com ${disponiveis.length} homologado${disponiveis.length === 1 ? "" : "s"}
           </button>
@@ -1205,15 +1241,23 @@ function confirmarAtaManual(numero){ gerarAta(numero, [...itensSelecionados]); }
 
 async function gerarAta(numero, itens){
   if (!itens || !itens.length){ toast("Selecione ao menos um item homologado.", "bad"); return; }
+  if (BACKEND && !processoConfirmado[numero]){ toast("Confirme o processo (Pregão + TR) antes de gerar a ata.", "bad"); return; }
 
   const chamada = BACKEND
     ? fetch(`/api/pregoes/${encodeURIComponent(numero)}/atas`, {
-        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({itens})
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({itens, processoId: processoConfirmado[numero]?.processoId}),
       }).then(r => r.json())
     : new Promise(res => setTimeout(() => res({ok:true}), 500));
 
   const res = await chamada;
-  if (!res.ok){ toast(res.erro === "itens_ja_cobertos" ? "Esses itens já estão em outra ata gerada." : "Não foi possível gerar a ata.", "bad"); return; }
+  if (!res.ok){
+    const msg = res.erro === "itens_ja_cobertos" ? "Esses itens já estão em outra ata gerada."
+      : res.erro === "processo_nao_confirmado" ? "Confirme o processo (Pregão + TR) antes de gerar a ata."
+      : "Não foi possível gerar a ata.";
+    toast(msg, "bad");
+    return;
+  }
 
   if (!BACKEND){
     const p = PREGOES.find(x => x.numero === numero);
@@ -1290,13 +1334,16 @@ function baixarCSV(){
 
 /* ---- modal ---- */
 let ultimoFoco = null;
-function abrirModal(){
+function abrirModal(numeroPreenchido){
   ultimoFoco = document.activeElement;
   $("#modal").classList.add("open");
   $("#resultado").innerHTML = "";
-  $("#fArtefato").classList.remove("err");
-  $("#artefato").value = "";
-  $("#artefato").focus();
+  $("#fPregao").classList.remove("err");
+  $("#fTR").classList.remove("err");
+  $("#campoPregao").value = numeroPreenchido || "";
+  $("#campoTR").value = "";
+  $("#campoProcesso").value = "";
+  (numeroPreenchido ? $("#campoTR") : $("#campoPregao")).focus();
 }
 function fecharModal(){ $("#modal").classList.remove("open"); ultimoFoco && ultimoFoco.focus(); }
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") fecharModal(); });
@@ -1304,33 +1351,99 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && $("#modal").classList.contains("open")) fecharModal();
 });
 
+const MOTIVO_PROCESSO = {
+  uasg_incompativel: "UASG incompatível com a configurada no sistema.",
+  pregao_nao_encontrado: "Pregão não encontrado no LicitaFlow.",
+  tr_nao_encontrado: "Nenhum Termo de Referência anexado para este pregão. Envie o PDF do TR na aba do pregão primeiro.",
+};
+
 function pesquisar(){
-  const n = $("#artefato").value.trim();
-  const campo = $("#fArtefato");
-  if (!/^\d{4,}$/.test(n)){
-    campo.classList.add("err");
-    $("#hintArtefato").textContent = "Informe o número do artefato — pelo menos 4 dígitos.";
-    $("#artefato").focus();
+  const uasg = $("#uasg").value.trim();
+  const pregao = $("#campoPregao").value.trim();
+  const tr = $("#campoTR").value.trim();
+  const numeroProcesso = $("#campoProcesso").value.trim();
+
+  let ok = true;
+  if (!/^\d+\/\d{4}$/.test(pregao)){
+    $("#fPregao").classList.add("err"); ok = false;
+  } else $("#fPregao").classList.remove("err");
+  if (!/^\d+\/\d{4}$/.test(tr)){
+    $("#fTR").classList.add("err"); ok = false;
+  } else $("#fTR").classList.remove("err");
+  if (!ok){
+    $("#hintPregao").textContent = "Formato número/ano, ex.: 90020/2026.";
+    $("#hintTR").textContent = "Formato número/ano, ex.: 12/2026.";
     return;
   }
-  campo.classList.remove("err");
-  $("#hintArtefato").textContent = "Somente números, como aparece no Compras.gov.br.";
-  const b = $("#btnBuscar");
-  b.disabled = true; b.innerHTML = '<span class="spin"></span>Pesquisando...';
 
-  setTimeout(() => {
-    b.disabled = false; b.textContent = "Pesquisar artefato";
+  const b = $("#btnBuscar");
+  b.disabled = true; b.innerHTML = '<span class="spin"></span>Localizando...';
+
+  const chamada = BACKEND
+    ? fetch("/api/processos/localizar", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({uasg, pregao, tr, numeroProcesso}),
+      }).then(r => r.json())
+    : new Promise(res => setTimeout(() => res(
+        PREGOES.some(p => p.numero === pregao)
+          ? {ok:true, processo:{uasg, pregao, tr, numeroProcesso, objeto: PREGOES.find(p => p.numero === pregao).objeto}}
+          : {ok:false, motivo:"pregao_nao_encontrado"}
+      ), 600));
+
+  chamada.then(res => {
+    b.disabled = false; b.textContent = "Localizar processo";
+
+    if (!res.ok){
+      $("#resultado").innerHTML = `
+        <div class="panel"><div class="body">
+          <span class="tag bad">🔴 Processo não localizado</span>
+          <p style="margin-top:10px">${esc(MOTIVO_PROCESSO[res.motivo] || "Não foi possível localizar o processo.")}</p>
+        </div></div>`;
+      return;
+    }
+
+    const p = res.processo;
+    const dadosPregao = PREGOES.find(x => x.numero === p.pregao);
+    const nItens = dadosPregao ? dadosPregao.itens.length : "—";
+    const nHomolog = dadosPregao ? homologados(dadosPregao) : "—";
+    const aviso = res.aviso === "conflito_com_processo_anterior"
+      ? `<div class="lock bad" style="margin-top:10px"><b>Atenção:</b> este pregão já tinha um processo confirmado antes (TR ${esc(res.processoAnterior.tr || "—")}${res.processoAnterior.numeroProcesso ? `, processo ${esc(res.processoAnterior.numeroProcesso)}` : ""}). Confira antes de confirmar de novo.</div>`
+      : "";
+
     $("#resultado").innerHTML = `
       <div class="panel"><div class="body">
-        <span class="tag ok">Artefato localizado</span>
-        <h3 style="margin:10px 0 2px">Termo de Referência ${esc(n)}</h3>
-        <div style="font-size:13px;color:var(--muted)">UASG ${esc($("#uasg").value)} · resultado de demonstração</div>
-        <div class="kv" style="margin-top:12px"><span>Pregão vinculado</span><b class="mono">52/2026</b></div>
-        <div class="kv"><span>Itens</span><b class="mono">9</b></div>
-        <div class="kv"><span>Fornecedores</span><b class="mono">3</b></div>
-        <div class="actions"><button class="btn" onclick="fecharModal();toast('Pregão 52/2026 adicionado ao acompanhamento.','ok')">Adicionar ao acompanhamento</button></div>
+        <span class="tag ok">🟢 Processo identificado com sucesso</span>
+        <div class="kv" style="margin-top:12px"><span>Pregão</span><b class="mono">${esc(p.pregao)}</b></div>
+        <div class="kv"><span>TR</span><b class="mono">${esc(p.tr)}</b></div>
+        <div class="kv"><span>Processo</span><b class="mono">${esc(p.numeroProcesso || "—")}</b></div>
+        <div class="kv"><span>UASG</span><b class="mono">${esc(p.uasg)}</b></div>
+        <div class="kv"><span>Objeto</span><b>${esc(p.objeto || "—")}</b></div>
+        <div class="kv"><span>Itens / Homologados</span><b class="mono">${nItens} / ${nHomolog}</b></div>
+        ${aviso}
+        <div class="actions" style="margin-top:12px">
+          <button class="btn" onclick="confirmarProcesso(${JSON.stringify(p).replace(/"/g,'&quot;')})">✓ Confirmar e continuar</button>
+        </div>
       </div></div>`;
-  }, 800);
+  }).catch(() => {
+    b.disabled = false; b.textContent = "Localizar processo";
+    toast("Não foi possível localizar o processo.", "bad");
+  });
+}
+
+function confirmarProcesso(p){
+  const chamada = BACKEND
+    ? fetch("/api/processos/confirmar", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(p),
+      }).then(r => r.json())
+    : Promise.resolve({ok:true, processoId:`demo-${p.pregao}`});
+
+  chamada.then(res => {
+    if (!res.ok){ toast("Não foi possível confirmar o processo.", "bad"); return; }
+    processoConfirmado[p.pregao] = {...p, processoId: res.processoId};
+    toast(`Processo do pregão ${p.pregao} confirmado. Geração de ata liberada.`, "ok");
+    fecharModal();
+    if (selecionado === p.pregao) renderDetalhe();
+  }).catch(() => toast("Não foi possível confirmar o processo.", "bad"));
 }
 
 /* =======================================================================
@@ -1595,7 +1708,7 @@ function renderSessao(){
         <b>${viva ? "Sessão ativa" : "Sessão expirada"}</b>
         <div style="font-size:13px;margin-top:3px">
           ${viva
-            ? `${esc(SESSAO.usuario)} · expira em ${min} min`
+            ? `${esc(SESSAO.usuario)} · ${min === Infinity ? "sem prazo de expiração rastreado" : `expira em ${min} min`}`
             : "O robô não consegue coletar itens da área logada até você reconectar."}
         </div>
       </div>
