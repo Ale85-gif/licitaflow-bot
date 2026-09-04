@@ -975,6 +975,102 @@ async def clonar_ata_modelo(page) -> str:
 # fim do texto existente, depois `type()` o valor. Confirmado
 # funcionando: preencher só "Fornecedor:" e "cnpj:" na célula de
 # cabeçalho, sem tocar em endereço/contatos/representante.
+#
+# ETAPA 2 (Checkpoint 1): comparação ao vivo entre a Ata 279 (modelo) e
+# a Ata 283 (concluída, pregão 44/2026) confirmou que as duas têm
+# EXATAMENTE a mesma estrutura de 10 colunas nessa tabela, na mesma
+# ordem. Mas uma investigação anterior (Ata 267) já mostrou um clone
+# com 9 colunas — índice fixo funciona hoje, mas é uma aposta. Por
+# isso o preenchimento passa a resolver o índice de cada campo pelo
+# NOME do cabeçalho (ver mapear_colunas/ler_mapa_colunas_precos
+# abaixo), nunca por posição — mesmo princípio de "casar por nome,
+# nunca por posição" já usado no ATMOS (sync_service.py).
+
+
+class EstruturaAtaNaoReconhecida(Exception):
+    """Levantada quando a tabela de preços ou a célula do fornecedor de
+    um clone não tem a estrutura esperada. Nunca deve ser "contornada"
+    deslocando valores para outra coluna — é sempre um sinal para parar
+    e revisar manualmente o clone/modelo antes de continuar."""
+
+
+COLUNAS_OBRIGATORIAS = [
+    "grupo do tr", "item do tr", "especificação", "marca", "modelo",
+    "unidade", "quantidade máxima", "quantidade mínima", "valor unitário",
+    "prazo de validade",
+]
+
+# Chave usada nos dicts de item (ver montar_itens_para_preenchimento) ->
+# nome normalizado do cabeçalho real da tabela de preços.
+CHAVE_PARA_CABECALHO = {
+    "grupo_tr": "grupo do tr",
+    "item_tr": "item do tr",
+    "especificacao": "especificação",
+    "marca": "marca",
+    "modelo": "modelo",
+    "unidade": "unidade",
+    "quantidade_maxima": "quantidade máxima",
+    "quantidade_minima": "quantidade mínima",
+    "valor_unitario": "valor unitário",
+    "prazo_validade": "prazo de validade",
+}
+
+
+def _normalizar_cabecalho(texto: str) -> str:
+    """Tolera maiúsculas/minúsculas, espaços extras e quebras de linha —
+    o cabeçalho real vem de células de rich-text e pode variar em
+    formatação sem mudar de significado."""
+    return re.sub(r"\s+", " ", (texto or "")).strip().lower()
+
+
+def mapear_colunas(textos_cabecalho: list[str]) -> dict[str, int]:
+    """Monta {nome_normalizado_da_coluna: índice} a partir dos textos das
+    células da linha de cabeçalho (tr[1] da tabela 'DOS PREÇOS'). Função
+    pura — não toca em Playwright, testável sem navegador."""
+    return {
+        _normalizar_cabecalho(texto): indice
+        for indice, texto in enumerate(textos_cabecalho)
+        if _normalizar_cabecalho(texto)
+    }
+
+
+def validar_mapa_colunas(mapa: dict, identificador_ata: str, numero_pregao: str) -> None:
+    """Levanta EstruturaAtaNaoReconhecida se qualquer coluna obrigatória
+    não foi encontrada no cabeçalho real. Chamada ANTES de preencher
+    qualquer item — nunca preenche parcialmente uma estrutura não
+    reconhecida."""
+    faltando = [c for c in COLUNAS_OBRIGATORIAS if c not in mapa]
+    if faltando:
+        raise EstruturaAtaNaoReconhecida(
+            "Estrutura da Ata não reconhecida\n\n"
+            f"Coluna ausente: {faltando[0]!r}\n\n"
+            f"Modelo: {identificador_ata}\n"
+            f"Pregão: {numero_pregao}"
+        )
+
+
+async def ler_mapa_colunas_precos(frame_editor) -> dict[str, int]:
+    """Lê o cabeçalho real (tr[1]) da tabela de preços JÁ ABERTA em
+    `frame_editor` (ver abrir_secao_documento) e monta o mapa de
+    colunas. IMPORTANTE: só lê dentro desse frame já escopado pra seção
+    'DOS PREÇOS' — nunca faz busca no documento inteiro. Isso importa
+    porque a seção '12. ANEXO — Cadastro Reserva' tem uma tabela com
+    cabeçalho quase idêntico a essa; escopar ao frame certo evita
+    qualquer ambiguidade sem precisar de heurística extra."""
+    tabela = frame_editor.locator("table").first
+    celulas_cabecalho = tabela.locator("tr").nth(1).locator("td, th")
+    total = await celulas_cabecalho.count()
+    textos = [await celulas_cabecalho.nth(i).inner_text() for i in range(total)]
+    return mapear_colunas(textos)
+
+
+def celula_fornecedor_valida(texto_celula: str) -> bool:
+    """Confirma que a célula de cabeçalho da tabela de preços realmente
+    contém o bloco Fornecedor/CNPJ/endereço/contato antes de deixar
+    preencher_fornecedor_cnpj escrever nela — nunca escreve numa célula
+    que não parece ser essa, mesmo que o índice (tr[0]/td[2]) bata."""
+    txt = (texto_celula or "").lower()
+    return all(marcador in txt for marcador in ["fornecedor", "cnpj", "endereço", "contato"])
 
 
 async def abrir_secao_documento(page, indice_accordion: int, texto_subitem: str):
@@ -1019,9 +1115,24 @@ async def preencher_fornecedor_cnpj(frame_editor, nome_fornecedor: str, cnpj: st
     (tr[0], td[2]) com os valores dados. NUNCA toca em endereço:,
     contatos: ou representante: — regra do projeto: só a Fornecedor e
     o CNPJ são preenchidos automaticamente, o resto fica para
-    preenchimento manual humano."""
+    preenchimento manual humano.
+
+    Antes de escrever, confirma que a célula realmente contém o bloco
+    Fornecedor/CNPJ/endereço/contato (ver celula_fornecedor_valida) —
+    nunca escreve só confiando no índice tr[0]/td[2], mesmo esse índice
+    já tendo sido confirmado nas Atas 279 e 283."""
     tabela = frame_editor.locator("table").first
     celula_fornecedor = tabela.locator("tr").nth(0).locator("td, th").nth(2)
+
+    texto_atual = await celula_fornecedor.inner_text()
+    if not celula_fornecedor_valida(texto_atual):
+        raise EstruturaAtaNaoReconhecida(
+            "Estrutura da Ata não reconhecida\n\n"
+            "A célula esperada para Fornecedor/CNPJ (tr[0]/td[2]) não contém "
+            "os rótulos esperados (Fornecedor/CNPJ/endereço/contato).\n\n"
+            f"Conteúdo encontrado: {texto_atual[:200]!r}"
+        )
+
     paragrafos = celula_fornecedor.locator("p")
 
     p_fornecedor = paragrafos.nth(0)
@@ -1110,14 +1221,20 @@ async def inserir_linha_tabela(page, celula_referencia, abaixo: bool = True) -> 
     await page.wait_for_timeout(1500)
 
 
-async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
-    """Preenche as 10 células de UMA linha de dado da tabela de itens
-    (já localizada em `linha_tr`, um <tr>) com os campos de `item`:
+async def preencher_linha_item(frame_editor, linha_tr, item: dict, mapa_colunas: dict) -> None:
+    """Preenche as células de UMA linha de dado da tabela de itens (já
+    localizada em `linha_tr`, um <tr>) com os campos de `item`:
     grupo_tr, item_tr, especificacao, marca, modelo, unidade,
     quantidade_maxima, quantidade_minima, valor_unitario e (opcional)
     prazo_validade (default "12 Meses" — a linha original do modelo já
     vem com isso preenchido, mas linhas inseridas via
     inserir_linha_tabela() vêm totalmente vazias).
+
+    `mapa_colunas` (ver ler_mapa_colunas_precos/mapear_colunas) resolve
+    o índice REAL de cada coluna pelo nome do cabeçalho — nunca por
+    posição fixa, pra não escrever num campo errado silenciosamente se
+    um modelo tiver colunas em ordem/quantidade diferente (ver
+    validar_mapa_colunas, chamada antes disso em criar_ata_fornecedor).
 
     Nunca inventa dado: se uma chave obrigatória faltar em `item`,
     levanta erro em vez de deixar a célula em branco silenciosamente
@@ -1131,21 +1248,22 @@ async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
     if faltando:
         raise ValueError(f"Campo(s) obrigatório(s) faltando para preencher a linha do item: {faltando}")
 
-    valores_por_indice = [
-        item["grupo_tr"],
-        item["item_tr"],
-        item["especificacao"],
-        item["marca"],
-        item["modelo"],
-        item["unidade"],
-        item["quantidade_maxima"],
-        item["quantidade_minima"],
-        item["valor_unitario"],
-        item.get("prazo_validade", "12 Meses"),
-    ]
+    valores_por_chave = {
+        "grupo_tr": item["grupo_tr"],
+        "item_tr": item["item_tr"],
+        "especificacao": item["especificacao"],
+        "marca": item["marca"],
+        "modelo": item["modelo"],
+        "unidade": item["unidade"],
+        "quantidade_maxima": item["quantidade_maxima"],
+        "quantidade_minima": item["quantidade_minima"],
+        "valor_unitario": item["valor_unitario"],
+        "prazo_validade": item.get("prazo_validade", "12 Meses"),
+    }
 
     celulas = linha_tr.locator("td, th")
-    for indice, valor in enumerate(valores_por_indice):
+    for chave, valor in valores_por_chave.items():
+        indice = mapa_colunas[CHAVE_PARA_CABECALHO[chave]]
         celula = celulas.nth(indice)
         texto_atual = (await celula.inner_text()).strip()
         if texto_atual:
@@ -1166,10 +1284,14 @@ async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
         await frame_editor.wait_for_timeout(150)
 
 
-async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
+async def preencher_tabela_itens(page, frame_editor, itens: list[dict], mapa_colunas: dict) -> None:
     """Preenche a tabela de 'DOS PREÇOS, ESPECIFICAÇÕES E QUANTITATIVOS'
     com a lista completa de itens de UM fornecedor (a mesma tabela já
     deve ter Fornecedor/CNPJ preenchidos via preencher_fornecedor_cnpj).
+
+    `mapa_colunas` deve vir de ler_mapa_colunas_precos() + já ter
+    passado por validar_mapa_colunas() — essa função não valida de
+    novo, só usa o mapa pra resolver os índices reais.
 
     Cada item de `itens` deve ter as chaves exigidas por
     preencher_linha_item (grupo_tr, item_tr, especificacao, marca,
@@ -1187,7 +1309,7 @@ async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
     tabela = frame_editor.locator("table").first
     linha_atual = tabela.locator("tr").nth(2)
 
-    await preencher_linha_item(frame_editor, linha_atual, itens[0])
+    await preencher_linha_item(frame_editor, linha_atual, itens[0], mapa_colunas)
     log(f"  Item 1/{len(itens)} preenchido (item TR {itens[0].get('item_tr')}).")
 
     for i, item in enumerate(itens[1:], start=2):
@@ -1200,7 +1322,7 @@ async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
         total_linhas = await tabela.locator("tr").count()
         linha_atual = tabela.locator("tr").nth(total_linhas - 1)
 
-        await preencher_linha_item(frame_editor, linha_atual, item)
+        await preencher_linha_item(frame_editor, linha_atual, item, mapa_colunas)
         log(f"  Item {i}/{len(itens)} preenchido (item TR {item.get('item_tr')}).")
 
     log(f"Tabela de itens preenchida: {len(itens)} item(ns) no total.")
@@ -1485,7 +1607,10 @@ def montar_itens_para_preenchimento(
     return resultado
 
 
-async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict) -> str:
+async def criar_ata_fornecedor(
+    page, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict,
+    numero_pregao: str = "",
+) -> str:
     """Cria a ata completa de UM fornecedor: clona a Ata 279, preenche
     Fornecedor/CNPJ, preenche a tabela de itens com todos os dados
     combinados, e remove das tabelas UGG/UGP os itens que não
@@ -1501,7 +1626,9 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
     # As tabelas de Quantidade Mínima/Máxima ficam na seção
     # "GERENCIADOR" (ÓRGÃO(S) GERENCIADOR E PARTICIPANTE(S)), não na
     # de "DOS PREÇOS" — precisa extrair de lá ANTES de montar os itens
-    # que vão ser preenchidos na tabela de preços.
+    # que vão ser preenchidos na tabela de preços. Confirmado ao vivo
+    # (Ata 283, item 6: Máxima=9/Mínima=2 batem exatamente com a coluna
+    # A dessas tabelas) — fonte preservada sem mudança nesta etapa.
     frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
     quantidades_minimas = await extrair_tabela_quantidades(frame_gerenciador, 1)
     quantidades_maximas = await extrair_tabela_quantidades(frame_gerenciador, 2)
@@ -1511,8 +1638,17 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
     )
 
     frame_editor = await abrir_secao_documento(page, 1, "DOS PREÇOS")
+
+    # Lê a estrutura real pelo cabeçalho ANTES de preencher qualquer
+    # coisa — nunca escreve por posição fixa (ver ETAPA 2, comparação
+    # 279x283: estrutura bate hoje, mas a Ata 267 já mostrou um modelo
+    # com 9 colunas; isso detecta esse caso e para, em vez de escrever
+    # o valor errado na célula errada silenciosamente).
+    mapa_colunas = await ler_mapa_colunas_precos(frame_editor)
+    validar_mapa_colunas(mapa_colunas, identificador, numero_pregao)
+
     await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
-    await preencher_tabela_itens(page, frame_editor, itens_para_preencher)
+    await preencher_tabela_itens(page, frame_editor, itens_para_preencher, mapa_colunas)
 
     # A remoção UGG é idempotente (relê o estado atual da tabela a cada
     # chamada e só remove o que ainda precisa) — diferente do
