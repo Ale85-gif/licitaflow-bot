@@ -46,6 +46,8 @@ from verificacao.pncp import consultar_pncp
 from verificacao.relatorio import gerar_relatorio
 from verificacao.sicaf import consultar_sicaf
 
+import processos_repo
+
 load_dotenv()
 
 RAIZ = Path(__file__).resolve().parent
@@ -57,8 +59,10 @@ ANEXOS_INDEX = ANEXOS_DIR / "index.json"
 ATAS_GERADAS_ARQUIVO = RAIZ / "licitaflow" / "atas_geradas.json"
 COMPROVANTES_DIR = RAIZ / "licitaflow" / "comprovantes_manuais"
 COLETAS_HISTORICO_ARQUIVO = RAIZ / "logs" / "coletas_historico.json"
-PROCESSOS_ARQUIVO = RAIZ / "licitaflow" / "processos.json"
-UASG_FIXA = "160082"
+# Leitura/gravação de processos.json e a validação de processo_id vivem em
+# processos_repo.py (compartilhado com bot_criar_ata.py - ver ETAPA 2
+# Checkpoint 2) para não duplicar a mesma lógica em dois lugares.
+UASG_FIXA = processos_repo.UASG_FIXA
 
 TTL_CACHE_SEGUNDOS = 120
 
@@ -243,47 +247,6 @@ def _salvar_atas_geradas(indice: dict) -> None:
     ATAS_GERADAS_ARQUIVO.write_text(json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _carregar_processos() -> dict:
-    if not PROCESSOS_ARQUIVO.exists():
-        return {}
-    try:
-        return json.loads(PROCESSOS_ARQUIVO.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _salvar_processos(indice: dict) -> None:
-    PROCESSOS_ARQUIVO.parent.mkdir(parents=True, exist_ok=True)
-    PROCESSOS_ARQUIVO.write_text(json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _processo_id(uasg: str, num_pregao: str, ano_pregao: str, num_tr: str, ano_tr: str) -> str:
-    bruto = f"{uasg}-{num_pregao}-{ano_pregao}-{num_tr}-{ano_tr}"
-    return re.sub(r"[^\w.-]", "_", bruto)
-
-
-def _partir_composto(valor: str) -> tuple[str, str]:
-    """'90020/2026' -> ('90020', '2026'). Sem barra, devolve ('valor', '')."""
-    valor = str(valor or "").strip()
-    if "/" in valor:
-        numero, ano = valor.split("/", 1)
-        return numero.strip(), ano.strip()
-    return valor, ""
-
-
-def _processo_confirmado_para(numero_pregao: str) -> Optional[dict]:
-    """Processo confirmado mais recente para esse pregão, ou None."""
-    candidatos = [
-        {**p, "processoId": pid}
-        for pid, p in _carregar_processos().items()
-        if p.get("pregaoCompleto") == numero_pregao
-    ]
-    if not candidatos:
-        return None
-    candidatos.sort(key=lambda p: p.get("confirmadoEm", ""))
-    return candidatos[-1]
-
-
 def _carregar_coletas() -> list[dict]:
     if not COLETAS_HISTORICO_ARQUIVO.exists():
         return []
@@ -426,7 +389,7 @@ async def gerar_ata_parcial(numero: str, corpo: dict):
         return JSONResponse({"ok": False, "erro": "sem_itens"}, status_code=400)
 
     processo_id = corpo.get("processoId")
-    processos = _carregar_processos()
+    processos = processos_repo.carregar_processos()
     processo = processos.get(processo_id) if processo_id else None
     if not processo or processo.get("pregaoCompleto") != numero:
         return JSONResponse({"ok": False, "erro": "processo_nao_confirmado"}, status_code=409)
@@ -475,8 +438,8 @@ def localizar_processo(corpo: dict):
             "detalhe": "Nenhum Termo de Referência anexado para este pregão. Envie o PDF do TR na aba do pregão primeiro.",
         }
 
-    num_pregao, ano_pregao = _partir_composto(pregao)
-    num_tr, ano_tr = _partir_composto(tr)
+    num_pregao, ano_pregao = processos_repo.partir_composto(pregao)
+    num_tr, ano_tr = processos_repo.partir_composto(tr)
 
     resposta = {
         "ok": True,
@@ -493,7 +456,7 @@ def localizar_processo(corpo: dict):
         },
     }
 
-    anterior = _processo_confirmado_para(pregao)
+    anterior = processos_repo.processo_confirmado_para(pregao)
     if anterior and (
         (tr and anterior.get("tr") and anterior["tr"] != tr)
         or (numero_processo and anterior.get("numeroProcesso") and anterior["numeroProcesso"] != numero_processo)
@@ -518,14 +481,14 @@ def confirmar_processo(corpo: dict):
     if uasg != UASG_FIXA or not pregao or not tr:
         return JSONResponse({"ok": False, "erro": "dados_incompletos"}, status_code=400)
 
-    num_pregao, ano_pregao = _partir_composto(pregao)
-    num_tr, ano_tr = _partir_composto(tr)
-    processo_id = _processo_id(uasg, num_pregao, ano_pregao, num_tr, ano_tr)
+    num_pregao, ano_pregao = processos_repo.partir_composto(pregao)
+    num_tr, ano_tr = processos_repo.partir_composto(tr)
+    processo_id = processos_repo.montar_processo_id(uasg, num_pregao, ano_pregao, num_tr, ano_tr)
 
     pregoes = {p["numero"]: p for p in _carregar_pregoes()}
     pregao_dado = pregoes.get(pregao, {})
 
-    processos = _carregar_processos()
+    processos = processos_repo.carregar_processos()
     processos[processo_id] = {
         "uasg": uasg,
         "numeroPregao": num_pregao,
@@ -538,14 +501,14 @@ def confirmar_processo(corpo: dict):
         "objeto": pregao_dado.get("objeto", ""),
         "confirmadoEm": datetime.now().isoformat(),
     }
-    _salvar_processos(processos)
+    processos_repo.salvar_processos(processos)
 
     return {"ok": True, "processoId": processo_id}
 
 
 @app.get("/api/processos/por-pregao/{numero:path}")
 def processo_por_pregao(numero: str):
-    processo = _processo_confirmado_para(numero)
+    processo = processos_repo.processo_confirmado_para(numero)
     return {"processo": processo}
 
 

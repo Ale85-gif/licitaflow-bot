@@ -15,6 +15,7 @@ from comum import (
     abrir_chrome,
     log,
 )
+import processos_repo
 
 # =========================================================
 # BOT CRIAR ATA - Cria Atas de Registro de Preços clonando um
@@ -834,6 +835,46 @@ def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05
 
 
 # =========================================================
+# ETAPA 2 (Checkpoint 2) — ANCORAGEM NO processo_id
+# =========================================================
+# processos.json (Etapa 1 — Identificação do Processo) é a única fonte
+# de verdade sobre qual Pregão/TR/Processo Administrativo/UASG foi
+# confirmado pelo usuário. Nada aqui pode assumir que a `page` recebida
+# está no lugar certo só porque quem chamou disse que está — sempre
+# valida o processo_id (processos_repo.validar_processo) e confirma que
+# a página realmente corresponde a esse pregão antes de raspar ou
+# preencher qualquer coisa.
+
+
+async def validar_pagina_pertence_ao_processo(page, processo: dict) -> None:
+    """Confirma que a `page` atual (já na tela de Seleção de
+    Fornecedores) corresponde de fato ao pregão do `processo` validado,
+    lendo o parâmetro `identificador=` da própria URL — nunca confia
+    que quem chamou navegou pro lugar certo. Levanta
+    processos_repo.ProcessoNaoConfirmado se não bater."""
+    esperado = montar_identificador(processo["uasg"], processo["numeroPregao"], processo["anoPregao"])
+    if f"identificador={esperado}" not in page.url:
+        raise processos_repo.ProcessoNaoConfirmado(
+            f"A página atual não corresponde ao pregão do processo {processo.get('pregaoCompleto')!r} "
+            f"(esperado identificador={esperado!r} na URL, url atual: {page.url})."
+        )
+
+
+async def coletar_fornecedores_itens_do_processo(
+    page, processo_id: str, arquivo_progresso: str | None = None
+) -> list[dict]:
+    """Mesma coleta de coletar_fornecedores_itens(), mas ancorada num
+    processo_id confirmado: valida o processo E confirma que `page`
+    está de fato no pregão desse processo antes de raspar qualquer
+    dado — nunca carrega itens de um pregão diferente do confirmado.
+    Não altera a lógica de raspagem em si (coletar_fornecedores_itens
+    permanece intocada, regra de "melhor classificado" preservada)."""
+    processo = processos_repo.validar_processo(processo_id)
+    await validar_pagina_pertence_ao_processo(page, processo)
+    return await coletar_fornecedores_itens(page, arquivo_progresso)
+
+
+# =========================================================
 # CRIAÇÃO DA ATA (clonar + preencher)
 # =========================================================
 # Ver notas técnicas no topo do arquivo: mecânica de clique em
@@ -1608,8 +1649,7 @@ def montar_itens_para_preenchimento(
 
 
 async def criar_ata_fornecedor(
-    page, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict,
-    numero_pregao: str = "",
+    page, processo_id: str, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict,
 ) -> str:
     """Cria a ata completa de UM fornecedor: clona a Ata 279, preenche
     Fornecedor/CNPJ, preenche a tabela de itens com todos os dados
@@ -1617,10 +1657,19 @@ async def criar_ata_fornecedor(
     pertencem a esse fornecedor. Deixa o clone como RASCUNHO pronto
     pra revisão humana — NUNCA clica em "Concluir".
 
+    `processo_id` é a âncora obrigatória (Etapa 1): validado logo no
+    início (processos_repo.validar_processo) — nunca só recebido e
+    ignorado. O número do pregão usado no restante da função (contexto
+    da mensagem de erro de estrutura, ver validar_mapa_colunas) vem do
+    PRÓPRIO processo validado, nunca de um parâmetro solto.
+
     Deve ser chamada com `page` já na tela de listagem de Artefatos
     Digitais (.../comprasnet-artefatos-web/leitor-artefato).
 
     Retorna o identificador do clone criado (ex: "308/2026")."""
+    processo = processos_repo.validar_processo(processo_id)
+    numero_pregao = processo["pregaoCompleto"]
+
     identificador = await clonar_ata_modelo(page)
 
     # As tabelas de Quantidade Mínima/Máxima ficam na seção
@@ -1684,13 +1733,18 @@ async def criar_ata_fornecedor(
 
 
 async def criar_atas_todos_fornecedores(
-    page, fornecedores: list[dict], itens_tr: dict, arquivo_relatorio: str | None = None
+    page, processo_id: str, fornecedores: list[dict], itens_tr: dict, arquivo_relatorio: str | None = None
 ) -> list[dict]:
     """Chama criar_ata_fornecedor() para cada fornecedor de
     `fornecedores` (formato retornado por coletar_fornecedores_itens —
     ignora quem tiver "itens" vazio) e monta a relação final: nome do
     fornecedor + CNPJ + identificador da ata (número/ano) criada para
     ele, ou o motivo da falha se não deu certo.
+
+    `processo_id` é validado uma vez aqui, ANTES de tocar no navegador
+    (falha rápido se o processo não existir/não estiver confirmado), e
+    de novo dentro de cada criar_ata_fornecedor() — validação em
+    profundidade, nunca confiando que já foi checado antes.
 
     Se um fornecedor falhar (mesmo depois dos retries internos de
     criar_ata_fornecedor), o loop PARA nele — não segue criando atas
@@ -1709,6 +1763,8 @@ async def criar_atas_todos_fornecedores(
 
     Deve ser chamada com `page` já na tela de listagem de Artefatos
     Digitais."""
+    processos_repo.validar_processo(processo_id)
+
     relatorio = []
 
     fornecedores_com_itens = [f for f in fornecedores if f.get("itens")]
@@ -1720,7 +1776,7 @@ async def criar_atas_todos_fornecedores(
         log(f"[{i}/{len(fornecedores_com_itens)}] {nome} ({cnpj}) — {len(fornecedor['itens'])} item(ns)...")
 
         try:
-            identificador = await criar_ata_fornecedor(page, cnpj, nome, fornecedor["itens"], itens_tr)
+            identificador = await criar_ata_fornecedor(page, processo_id, cnpj, nome, fornecedor["itens"], itens_tr)
             relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": identificador, "status": "OK"})
         except Exception as e:
             log(f"  ⚠ Falha ao criar ata para {nome} ({cnpj}) — PARANDO o processo aqui (não vou criar mais "
