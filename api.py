@@ -44,6 +44,7 @@ from verificacao import historico as historico_empresas
 from verificacao.pncp import consultar_pncp
 from verificacao.relatorio import gerar_relatorio
 from verificacao.sicaf import consultar_sicaf
+from bot_controle import status_publico as bot_status_publico
 
 load_dotenv()
 
@@ -301,6 +302,14 @@ def painel():
 def status():
     try:
         return _status()
+    except Exception as e:
+        return JSONResponse({"erro": str(e)}, status_code=500)
+
+
+@app.get("/api/bot/status")
+def bot_status():
+    try:
+        return bot_status_publico()
     except Exception as e:
         return JSONResponse({"erro": str(e)}, status_code=500)
 

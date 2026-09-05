@@ -9,28 +9,29 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --ink:#1C1D20;
-  --paper:#F3F2F0;
-  --surface:#FFFFFF;
-  --line:#DDDBD7;
-  --muted:#6E6B66;
+  --ink:#F1EFEA;
+  --paper:#17181A;
+  --surface:#1F2124;
+  --surface-2:#262A2E;
+  --line:#33363B;
+  --muted:#96938C;
 
-  --accent:#A85C36;
-  --accent-dark:#8C4A2A;
-  --accent-soft:#F6E9E1;
+  --accent:#E2794A;
+  --accent-dark:#C6602F;
+  --accent-soft:#3A2717;
 
-  --olive:#3F7D5C;
-  --olive-dark:#2E5F45;
-  --olive-soft:#E2EFE8;
+  --olive:#4E9670;
+  --olive-dark:#8FCBA6;
+  --olive-soft:#16281E;
 
-  --amber:#7A5312;
-  --amber-soft:#F8EEDA;
-  --rust:#AF4436;
-  --rust-soft:#F8E5E1;
-  --slate-soft:#E4E7EA;
-  --slate:#4A5C6B;
+  --amber:#DBA24B;
+  --amber-soft:#2C2515;
+  --rust:#E2685A;
+  --rust-soft:#341C19;
+  --slate-soft:#1E2529;
+  --slate:#93A6B5;
   --radius:10px;
-  --shadow:0 1px 2px #1c1d2010, 0 6px 18px #1c1d200d;
+  --shadow:0 1px 2px #00000040, 0 10px 28px #00000038;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -39,6 +40,7 @@ body{
   font-family:"IBM Plex Sans",system-ui,Arial,sans-serif;
   font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
 }
+input,select,textarea{color:var(--ink)}
 .mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace}
 h1,h2,h3{margin:0;letter-spacing:-.01em}
 button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
@@ -47,13 +49,13 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 /* ---------- layout ---------- */
 .app{display:flex;min-height:100vh}
 .side{
-  width:236px;flex-shrink:0;background:var(--ink);color:#DEDCD8;
+  width:236px;flex-shrink:0;background:var(--surface-2);color:#DEDCD8;
   padding:22px 14px;display:flex;flex-direction:column;gap:4px;
   position:sticky;top:0;height:100vh;
 }
 .brand{padding:0 8px 20px;border-bottom:1px solid #ffffff1a;margin-bottom:16px}
 .brand .word{font-size:21px;font-weight:700;letter-spacing:-.02em;color:#fff}
-.brand .word em{font-style:normal;color:#D9855A}
+.brand .word em{font-style:normal;color:var(--accent)}
 .brand .org{font-size:11px;color:#8B8781;margin-top:6px;letter-spacing:.06em;text-transform:uppercase}
 .nav{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
@@ -93,16 +95,16 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .search{display:flex;gap:8px;padding:14px 20px 4px}
 .search input{
   flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
-  font:inherit;background:#FBFAF9;
+  font:inherit;background:var(--paper);
 }
-.search input::placeholder{color:#98948E}
+.search input::placeholder{color:#5C5952}
 
 .item-row{
   display:flex;width:100%;gap:12px;align-items:center;justify-content:space-between;
-  padding:13px 20px;border-bottom:1px solid #EAE8E5;text-align:left;
+  padding:13px 20px;border-bottom:1px solid var(--line);text-align:left;
 }
 .item-row:last-child{border-bottom:0}
-.item-row:hover{background:#F7F6F4}
+.item-row:hover{background:var(--surface-2)}
 .item-row[aria-selected="true"]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
 .item-row .t{font-weight:600;font-size:14.5px}
 .item-row .s{font-size:12.5px;color:var(--muted);margin-top:3px}
@@ -113,7 +115,7 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .tag.wait{background:var(--amber-soft);color:var(--amber)}
 .tag.bad{background:var(--rust-soft);color:var(--rust)}
 .tag.info{background:var(--slate-soft);color:var(--slate)}
-.tag.erro{background:#FCE8D5;color:#8A4B12}
+.tag.erro{background:#2E2013;color:#E8A868}
 
 /* ---------- mapa de itens (signature) ---------- */
 .mapa{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px}
@@ -124,15 +126,15 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 }
 .chip:hover{transform:translateY(-2px)}
 .chip.ok{background:var(--olive);color:#fff}
-.chip.wait{background:var(--amber-soft);color:var(--amber);border-color:#E8D4A8}
-.chip.bad{background:var(--rust-soft);color:var(--rust);border-color:#EFC9C1}
+.chip.wait{background:var(--amber-soft);color:var(--amber);border-color:#4A3B1E}
+.chip.bad{background:var(--rust-soft);color:var(--rust);border-color:#4A2620}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px;flex-wrap:wrap}
 .legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px}
 
-.progress{height:8px;background:#E6E3DF;border-radius:99px;overflow:hidden;margin:10px 0 6px}
+.progress{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:10px 0 6px}
 .progress .bar{height:100%;background:var(--olive);transition:width .3s ease}
 
-.kv{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid #EAE8E5;font-size:14px}
+.kv{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
 .kv:last-child{border-bottom:0}
 .kv span{color:var(--muted)}
 .kv b{font-weight:600;text-align:right}
@@ -141,15 +143,15 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
   display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:8px;
   font-size:13.5px;margin-top:14px;line-height:1.45;
 }
-.lock.bad{background:var(--rust-soft);color:#8A3428}
+.lock.bad{background:var(--rust-soft);color:var(--rust)}
 .lock.ok{background:var(--olive-soft);color:var(--olive-dark)}
-.lock.wait{background:var(--amber-soft);color:#7A5312}
+.lock.wait{background:var(--amber-soft);color:var(--amber)}
 
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 .btn{padding:10px 15px;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;font-size:14px}
 .btn:hover{background:var(--accent-dark)}
-.btn.ghost{background:#F1EFEC;color:var(--ink);border:1px solid var(--line)}
-.btn.ghost:hover{background:#E7E4E0}
+.btn.ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
+.btn.ghost:hover{background:#2C2F33}
 .btn[disabled]{opacity:.45;cursor:not-allowed}
 
 /* ---------- fluxo ---------- */
@@ -157,7 +159,7 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .fase{display:flex;align-items:center;gap:9px;padding-right:6px}
 .dot{
   width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
-  font-size:12px;font-weight:600;background:#E6E3DF;color:var(--muted);
+  font-size:12px;font-weight:600;background:var(--line);color:var(--muted);
   font-family:"IBM Plex Mono",monospace;flex-shrink:0;
 }
 .fase.done .dot{background:var(--olive);color:#fff}
@@ -172,12 +174,12 @@ th{
   text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
   color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;
 }
-td{padding:12px;border-bottom:1px solid #EAE8E5;vertical-align:middle}
+td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 td.num{font-family:"IBM Plex Mono",monospace;font-size:13.5px}
 
 /* ---------- alertas ---------- */
-.alerta{display:flex;gap:14px;padding:14px 20px;border-bottom:1px solid #EAE8E5;align-items:flex-start}
+.alerta{display:flex;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:flex-start}
 .alerta:last-child{border-bottom:0}
 .alerta .mark{width:6px;align-self:stretch;border-radius:99px;flex-shrink:0}
 .alerta.crit .mark{background:var(--rust)}
@@ -197,17 +199,30 @@ td.num{font-family:"IBM Plex Mono",monospace;font-size:13.5px}
 /* ---------- banner de sessão expirada ---------- */
 .banner-alerta{
   display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
-  background:var(--rust-soft);color:#8A3428;border:1px solid #EFC9C1;border-radius:var(--radius);
+  background:var(--rust-soft);color:var(--rust);border:1px solid #4A2620;border-radius:var(--radius);
   padding:12px 16px;margin-bottom:14px;font-size:13.5px;
 }
 .banner-alerta[hidden]{display:none}
 .banner-alerta b{font-weight:700}
 .banner-alerta .btn{padding:7px 12px;font-size:13px;background:var(--rust);flex-shrink:0}
-.banner-alerta .btn:hover{background:#8A3428}
+.banner-alerta .btn:hover{background:#B84F3F}
 .nav .count.alert{background:var(--rust);color:#fff}
 
 /* ---------- resumo número+rótulo repetido nas telas ---------- */
 .mini-stats{display:flex;gap:22px;flex-wrap:wrap;margin:2px 0 18px}
+
+/* ---------- atalhos rápidos (Painel) ---------- */
+.atalhos{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.atalho{
+  flex:1;min-width:150px;display:flex;align-items:center;gap:12px;text-align:left;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;box-shadow:var(--shadow);transition:border-color .15s ease,transform .12s ease;
+}
+.atalho:hover{border-color:var(--accent);transform:translateY(-1px)}
+.atalho .ic{width:34px;height:34px;border-radius:8px;background:var(--accent-soft);display:grid;place-items:center;flex-shrink:0;font-size:16px}
+.atalho .tx{display:flex;flex-direction:column;gap:1px;min-width:0}
+.atalho .tx b{font-size:14px}
+.atalho .tx span{font-size:11.5px;color:var(--muted)}
 
 /* ---------- fornecedores: resumo com expansão ---------- */
 .forn-details summary{
@@ -223,7 +238,7 @@ td.num{font-family:"IBM Plex Mono",monospace;font-size:13.5px}
 .alerta-grupo-titulo{
   display:flex;align-items:center;gap:8px;padding:12px 20px 6px;
   font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--muted);background:#FAF9F7;
+  color:var(--muted);background:var(--surface-2);
 }
 .alerta-grupo-titulo .count{
   font-size:11px;padding:1px 7px;border-radius:99px;background:var(--slate-soft);
@@ -234,7 +249,7 @@ td.num{font-family:"IBM Plex Mono",monospace;font-size:13.5px}
 .head-search{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .head-search input{
   padding:8px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;
-  background:#FBFAF9;font-size:13.5px;width:220px;max-width:100%;
+  background:var(--paper);font-size:13.5px;width:220px;max-width:100%;
 }
 .tabela-scroll{max-height:520px;overflow-y:auto}
 .tabela-scroll thead th{position:sticky;top:0;background:var(--surface);z-index:1}
@@ -249,7 +264,7 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
   font-size:9px;line-height:1;display:grid;place-items:center;color:#fff;
   border:1.5px solid var(--surface);
 }
-.chip.ok::after{content:"✓";background:var(--olive-dark)}
+.chip.ok::after{content:"✓";background:var(--olive)}
 .chip.wait::after{content:"!";background:var(--amber)}
 .chip.bad::after{content:"×";background:var(--rust);font-size:10px}
 .legend-hint{font-size:12px;color:var(--muted);margin-top:2px}
@@ -257,37 +272,37 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
 .chip.selecionado{outline:2px solid var(--accent);outline-offset:2px}
 .selecao-barra{
   display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  background:var(--accent-soft);border:1px solid #E8CBB8;border-radius:8px;
+  background:var(--accent-soft);border:1px solid #5A3D24;border-radius:8px;
   padding:10px 14px;margin-top:8px;font-size:13.5px;
 }
 .atas-geradas-lista{margin-top:10px;font-size:13px}
-.atas-geradas-lista .item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #EAE8E5}
+.atas-geradas-lista .item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
 .atas-geradas-lista .item:last-child{border-bottom:0}
 
 /* ---------- modal ---------- */
-.modal{position:fixed;inset:0;background:#1c1d20b3;display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
+.modal{position:fixed;inset:0;background:#000000b3;display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
 .modal.open{display:flex}
 .box{background:var(--surface);width:min(560px,100%);border-radius:12px;padding:24px;max-height:88vh;overflow:auto;box-shadow:0 20px 50px #0006}
 .box h2{font-size:19px;margin-bottom:6px}
 .field{margin:14px 0}
 .field label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px}
-.field input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#FBFAF9}
+.field input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--paper);color:var(--ink)}
 .field .hint{font-size:12px;color:var(--muted);margin-top:5px}
-.field.err input{border-color:var(--rust);background:#FDF6F4}
+.field.err input{border-color:var(--rust);background:#2A1815}
 .field.err .hint{color:var(--rust)}
 
 /* ---------- toast ---------- */
 .toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:60}
 .toast{
-  background:var(--ink);color:#fff;padding:12px 16px;border-radius:9px;font-size:13.5px;
+  background:var(--surface-2);color:#fff;padding:12px 16px;border-radius:9px;font-size:13.5px;
   max-width:340px;box-shadow:0 8px 24px #0003;animation:rise .2s ease;
 }
-.toast.ok{background:var(--olive-dark)}
+.toast.ok{background:var(--olive)}
 .toast.bad{background:var(--rust)}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* ---------- login ---------- */
-.gate{position:fixed;inset:0;background:var(--ink);display:grid;place-items:center;padding:20px;z-index:80}
+.gate{position:fixed;inset:0;background:var(--paper);display:grid;place-items:center;padding:20px;z-index:80}
 .gate[hidden]{display:none}
 .gate .card{background:var(--surface);width:min(400px,100%);border-radius:14px;padding:30px;box-shadow:0 24px 60px #0005}
 .gate .word{font-size:24px;font-weight:700;letter-spacing:-.02em}
@@ -298,14 +313,14 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
 
 /* ---------- sessão ---------- */
 .sessao{display:flex;gap:14px;align-items:center;padding:16px 20px;border-radius:10px;border:1px solid var(--line)}
-.sessao.ok{background:var(--olive-soft);border-color:#BFDACB}
-.sessao.exp{background:var(--rust-soft);border-color:#EFC9C1}
+.sessao.ok{background:var(--olive-soft);border-color:#2E4436}
+.sessao.exp{background:var(--rust-soft);border-color:#4A2620}
 .pulse{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.sessao.ok .pulse{background:var(--olive);box-shadow:0 0 0 4px #3f7d5c26}
-.sessao.exp .pulse{background:var(--rust);box-shadow:0 0 0 4px #af443626}
+.sessao.ok .pulse{background:var(--olive);box-shadow:0 0 0 4px #4e967026}
+.sessao.exp .pulse{background:var(--rust);box-shadow:0 0 0 4px #e2685a26}
 .log{font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.9;color:var(--muted)}
 .log b{color:var(--ink);font-weight:500}
-.passo{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid #EAE8E5;font-size:13.5px}
+.passo{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13.5px}
 .passo:last-child{border-bottom:0}
 .passo .n{font-family:"IBM Plex Mono",monospace;color:var(--accent);font-weight:600;flex-shrink:0}
 
@@ -412,6 +427,29 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
         </div>
       </div>
 
+      <div class="atalhos">
+        <button class="atalho" onclick="trocarView('pregoes')">
+          <span class="ic">📋</span>
+          <span class="tx"><b id="atPregoes">0 pregões</b><span>Ver todos</span></span>
+        </button>
+        <button class="atalho" onclick="trocarView('atas')">
+          <span class="ic">📄</span>
+          <span class="tx"><b id="atAtas">0 atas</b><span>Vigência e valores</span></span>
+        </button>
+        <button class="atalho" onclick="trocarView('alertas')">
+          <span class="ic">⚠️</span>
+          <span class="tx"><b id="atAlertas">0 alertas</b><span>Prioridades</span></span>
+        </button>
+        <button class="atalho" onclick="trocarView('empresas')">
+          <span class="ic">🏢</span>
+          <span class="tx"><b>Empresas</b><span>Consultar CNPJ</span></span>
+        </button>
+        <button class="atalho" onclick="trocarView('conexao')">
+          <span class="ic">🔗</span>
+          <span class="tx"><b id="atConexao">Conexão</b><span>Compras.gov.br</span></span>
+        </button>
+      </div>
+
       <div class="grid">
         <section class="panel">
           <div class="head">
@@ -476,7 +514,7 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:8px 0 10px">
         <h1 style="font-size:26px;margin:0;font-weight:600">Atas de registro de preços</h1>
         <select id="ordAtas" onchange="renderAtas()" aria-label="Ordenar atas"
-                style="padding:8px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#FBFAF9;font-size:13.5px">
+                style="padding:8px 30px 8px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--paper) url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2714%27 height=%2714%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%2396938C%27 stroke-width=%272%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27m6 9 6 6 6-6%27/%3E%3C/svg%3E') no-repeat right 10px center;font-size:13.5px;color:var(--ink);appearance:none;-webkit-appearance:none">
           <option value="vencimento">Ordenar por vencimento</option>
           <option value="numero">Ordenar por número</option>
           <option value="valor">Ordenar por valor</option>
@@ -569,6 +607,13 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
       </div>
 
       <section class="panel" style="margin-top:18px">
+        <div class="head"><h2>Automação</h2></div>
+        <div class="body" id="cardAutomacao">
+          <p class="legend-hint">Status da execução automática fica disponível quando o painel está conectado à API local.</p>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:18px">
         <div class="head"><h2>Fontes de dados</h2></div>
         <div class="body tight" style="overflow-x:auto">
           <table>
@@ -582,6 +627,12 @@ th.ordenavel .seta{font-size:9px;margin-left:3px;color:var(--accent)}
                   <td><span class="tag bad">Sim</span></td><td>Artefatos/TR, homologação item a item, atas da sua UASG</td></tr>
               <tr><td><b>Contratos.gov.br</b></td>
                   <td><span class="tag bad">Sim</span></td><td>Empenhos e execução das atas</td></tr>
+              <tr><td><b>CEIS</b> <span class="mono" style="font-size:12px;color:var(--muted)">Portal da Transparência</span></td>
+                  <td><span class="tag ok">Não</span></td><td>Empresas inidôneas/suspensas — consulta por CNPJ</td></tr>
+              <tr><td><b>CNEP</b> <span class="mono" style="font-size:12px;color:var(--muted)">Portal da Transparência</span></td>
+                  <td><span class="tag ok">Não</span></td><td>Empresas punidas por atos lesivos — consulta por CNPJ</td></tr>
+              <tr><td><b>SICAF</b></td>
+                  <td><span class="tag info">—</span></td><td>Sem API pública: link oficial para confirmação manual</td></tr>
             </tbody>
           </table>
         </div>
@@ -768,6 +819,15 @@ function renderHero(){
   $("#footData").textContent   = HOJE.toLocaleDateString("pt-BR");
 }
 
+function renderAtalhos(){
+  const t = totais();
+  $("#atPregoes").textContent = `${t.pregoes} pregões`;
+  $("#atAtas").textContent = `${t.atas} atas liberadas`;
+  $("#atAlertas").textContent = `${gerarAlertas().length} alertas`;
+  const conectado = $("#navSessao").textContent === "on";
+  $("#atConexao").textContent = conectado ? "Conectado" : "Desconectado";
+}
+
 function renderLista(){
   const q = ($("#filtro").value || "").toLowerCase().trim();
   const lista = PREGOES.filter(p =>
@@ -865,8 +925,8 @@ function renderDetalhe(){
       </div>
       <div class="legend">
         <span><i style="background:var(--olive)"></i>✓ Homologado</span>
-        <span><i style="background:var(--amber-soft);border:1px solid #E8D4A8"></i>! Pendente</span>
-        <span><i style="background:var(--rust-soft);border:1px solid #EFC9C1"></i>× Diligência / recurso</span>
+        <span><i style="background:var(--amber-soft);border:1px solid #4A3B1E"></i>! Pendente</span>
+        <span><i style="background:var(--rust-soft);border:1px solid #4A2620"></i>× Diligência / recurso</span>
       </div>
 
       <div class="eyebrow" style="margin-top:18px">Gerar ata com itens prontos</div>
@@ -1609,6 +1669,44 @@ function renderColetas(){
     `<div><b>${c.em}</b> ${c.ok ? "✓" : "✕"} ${esc(c.msg)}</div>`).join("");
 }
 
+const TAG_STATUS_BOT = {
+  executando: "info", aguardando: "ok", pausado: "wait", erro: "bad", pronto: "ok"
+};
+const TEXTO_STATUS_BOT = {
+  executando: "Executando agora", aguardando: "Aguardando próxima execução",
+  pausado: "Automático pausado", erro: "Falhou na última execução", pronto: "Pronto"
+};
+
+async function carregarBotStatus(){
+  if (!BACKEND) return;
+  const el = $("#cardAutomacao");
+  if (!el) return;
+  try{
+    const r = await fetch("/api/bot/status", {signal:AbortSignal.timeout(6000)});
+    if (!r.ok) return;
+    renderAutomacao(await r.json());
+  }catch(e){ /* mantém o último estado exibido */ }
+}
+
+function renderAutomacao(s){
+  const el = $("#cardAutomacao");
+  if (!el) return;
+  const tag = TAG_STATUS_BOT[s.status] || "info";
+  const texto = TEXTO_STATUS_BOT[s.status] || s.status;
+  const ue = s.ultimaExecucao;
+
+  el.innerHTML = `
+    <div class="kv"><span>Situação</span><b><span class="tag ${tag}">${esc(texto)}</span></b></div>
+    ${ue ? `
+    <div class="kv"><span>Última execução</span><b>${fmtDataHora(ue.iniciadoEm)}${ue.duracaoSegundos != null ? ` · ${ue.duracaoSegundos}s` : ""}</b></div>
+    <div class="kv"><span>Pregões / itens no dados.db</span><b class="mono">${ue.pregoesAnalisados ?? "—"} / ${ue.itensEncontrados ?? "—"}</b></div>
+    ${ue.erro ? `<div class="lock bad" style="margin-top:10px">${esc(ue.erro)}</div>` : ""}
+    ` : `<div class="kv"><span>Última execução</span><b>Nenhuma ainda</b></div>`}
+    ${s.proximaExecucao ? `<div class="kv"><span>Próxima execução</span><b>${fmtDataHora(s.proximaExecucao)}</b></div>` : ""}
+    <div class="legend-hint" style="margin-top:8px">Execução agendada pelo Agendador de Tarefas do Windows (10h–17h) — este painel só mostra o resultado, não dispara nada.</div>
+  `;
+}
+
 function conectar(){
   const b = $("#btnConectar");
   b.disabled = true;
@@ -1750,9 +1848,11 @@ setInterval(renderFrescor, 30000);
 function renderTudo(){
   renderHero(); renderLista(); renderDetalhe(); renderStatsPregoes();
   renderTabela(); renderAtas(); renderAlertas(); renderSessao(); renderFrescor();
+  renderAtalhos();
 }
 renderTudo();
-detectarBackend();
+detectarBackend().then(carregarBotStatus);
+setInterval(carregarBotStatus, 30000);
 $("#gSenha").focus();
 </script>
 </body>
