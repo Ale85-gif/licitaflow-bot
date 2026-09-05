@@ -35,6 +35,8 @@ licitaflow/bot_controle.json
 licitaflow/verificacoes_empresas.json
 licitaflow/confirmacoes_manuais.json
 licitaflow/comprovantes_manuais/
+licitaflow/processos.json
+licitaflow/preparacoes_atas.json
 
 # Pasta de staging temporária (arquivos trazidos manualmente, já organizados)
 hoje/

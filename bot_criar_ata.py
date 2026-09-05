@@ -15,6 +15,7 @@ from comum import (
     abrir_chrome,
     log,
 )
+import processos_repo
 
 # =========================================================
 # BOT CRIAR ATA - Cria Atas de Registro de Preços clonando um
@@ -85,6 +86,14 @@ URL_AREA_TRABALHO = "https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-area-
 # Ata MODELO (nunca editar diretamente — só clonar a partir dela).
 ARTEFATO_MODELO_NUMERO = "279"
 ARTEFATO_MODELO_ANO = "2026"
+
+# ETAPA 2 (Checkpoint 4) — estados possíveis do resultado de
+# criar_ata_fornecedor(). RASCUNHO só é alcançado se o preenchimento
+# E a segunda validação (o que foi de fato escrito, lido de volta do
+# DOM) baterem — nunca só porque não houve exceção durante a escrita.
+ESTADO_PREPARANDO = "PREPARANDO"
+ESTADO_RASCUNHO = "RASCUNHO"
+ESTADO_REVISAO_NECESSARIA = "REVISÃO NECESSÁRIA"
 
 
 async def navegar_para_artefatos_digitais(page_area_trabalho):
@@ -834,6 +843,46 @@ def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05
 
 
 # =========================================================
+# ETAPA 2 (Checkpoint 2) — ANCORAGEM NO processo_id
+# =========================================================
+# processos.json (Etapa 1 — Identificação do Processo) é a única fonte
+# de verdade sobre qual Pregão/TR/Processo Administrativo/UASG foi
+# confirmado pelo usuário. Nada aqui pode assumir que a `page` recebida
+# está no lugar certo só porque quem chamou disse que está — sempre
+# valida o processo_id (processos_repo.validar_processo) e confirma que
+# a página realmente corresponde a esse pregão antes de raspar ou
+# preencher qualquer coisa.
+
+
+async def validar_pagina_pertence_ao_processo(page, processo: dict) -> None:
+    """Confirma que a `page` atual (já na tela de Seleção de
+    Fornecedores) corresponde de fato ao pregão do `processo` validado,
+    lendo o parâmetro `identificador=` da própria URL — nunca confia
+    que quem chamou navegou pro lugar certo. Levanta
+    processos_repo.ProcessoNaoConfirmado se não bater."""
+    esperado = montar_identificador(processo["uasg"], processo["numeroPregao"], processo["anoPregao"])
+    if f"identificador={esperado}" not in page.url:
+        raise processos_repo.ProcessoNaoConfirmado(
+            f"A página atual não corresponde ao pregão do processo {processo.get('pregaoCompleto')!r} "
+            f"(esperado identificador={esperado!r} na URL, url atual: {page.url})."
+        )
+
+
+async def coletar_fornecedores_itens_do_processo(
+    page, processo_id: str, arquivo_progresso: str | None = None
+) -> list[dict]:
+    """Mesma coleta de coletar_fornecedores_itens(), mas ancorada num
+    processo_id confirmado: valida o processo E confirma que `page`
+    está de fato no pregão desse processo antes de raspar qualquer
+    dado — nunca carrega itens de um pregão diferente do confirmado.
+    Não altera a lógica de raspagem em si (coletar_fornecedores_itens
+    permanece intocada, regra de "melhor classificado" preservada)."""
+    processo = processos_repo.validar_processo(processo_id)
+    await validar_pagina_pertence_ao_processo(page, processo)
+    return await coletar_fornecedores_itens(page, arquivo_progresso)
+
+
+# =========================================================
 # CRIAÇÃO DA ATA (clonar + preencher)
 # =========================================================
 # Ver notas técnicas no topo do arquivo: mecânica de clique em
@@ -851,11 +900,45 @@ def montar_identificador(uasg: str, numero: str, ano: str, modalidade: str = "05
 # não precisa de nenhuma navegação extra depois do clique.
 
 
-async def clonar_ata_modelo(page) -> str:
+def obter_modelo_ata(processo_id: str) -> dict:
+    """ETAPA 2 (Checkpoint 3): determina qual Ata-modelo deve ser
+    clonada para esse `processo_id`.
+
+    Valida o processo_id (processos_repo.validar_processo — nunca
+    recebe e ignora) e deriva o pregão do próprio processo validado,
+    nunca de parâmetro solto. Por enquanto SEMPRE retorna o modelo fixo
+    (ARTEFATO_MODELO_NUMERO/ANO, a Ata 279) — não existe ainda nenhuma
+    regra real de "modelo por pregão" (isso exigiria descobrir
+    automaticamente no Compras.gov.br qual é o modelo certo de cada
+    pregão, o que não foi investigado; não inventar essa regra).
+
+    A comparação ao vivo entre a Ata 279 e a Ata 283 (Etapa 2,
+    investigação) confirmou que esse modelo fixo tem a estrutura
+    esperada para o pregão 44/2026 — mas isso NÃO é garantia geral pra
+    qualquer outro pregão (a Ata 267 já mostrou um clone com estrutura
+    diferente). Esta função existe pra isolar essa decisão num único
+    lugar: no futuro, uma regra real de seleção por pregão troca só o
+    corpo desta função, sem precisar mexer em quem chama.
+
+    Retorna {"numero", "ano", "numero_pregao"} — `numero_pregao` é só
+    contexto (não influencia a escolha ainda)."""
+    processo = processos_repo.validar_processo(processo_id)
+    return {
+        "numero": ARTEFATO_MODELO_NUMERO,
+        "ano": ARTEFATO_MODELO_ANO,
+        "numero_pregao": processo["pregaoCompleto"],
+    }
+
+
+async def clonar_ata_modelo(
+    page, numero_modelo: str = ARTEFATO_MODELO_NUMERO, ano_modelo: str = ARTEFATO_MODELO_ANO,
+) -> str:
     """Clica em 'Clonar' (ícone fa-copy) na linha do artefato MODELO
-    (ARTEFATO_MODELO_NUMERO/ARTEFATO_MODELO_ANO, isto é, a Ata 279) na
-    tela de listagem de Artefatos Digitais. NUNCA clica em Editar nessa
-    linha — só em Clonar, pra nunca alterar o modelo original.
+    (por padrão ARTEFATO_MODELO_NUMERO/ARTEFATO_MODELO_ANO, isto é, a
+    Ata 279 — mas aceita outro modelo via `numero_modelo`/`ano_modelo`,
+    ver obter_modelo_ata) na tela de listagem de Artefatos Digitais.
+    NUNCA clica em Editar nessa linha — só em Clonar, pra nunca alterar
+    o modelo original.
 
     Deve ser chamada com `page` já na tela de listagem
     (.../comprasnet-artefatos-web/leitor-artefato).
@@ -864,7 +947,7 @@ async def clonar_ata_modelo(page) -> str:
     extraído da URL depois que o sistema navega automaticamente pro
     editor dele.
     """
-    identificador_modelo = f"{ARTEFATO_MODELO_NUMERO}/{ARTEFATO_MODELO_ANO}"
+    identificador_modelo = f"{numero_modelo}/{ano_modelo}"
 
     # A listagem é paginada, com ordenação que não é puramente
     # cronológica nem numérica — confirmado em teste real que o
@@ -880,7 +963,7 @@ async def clonar_ata_modelo(page) -> str:
         raise RuntimeError("Não achei o campo de busca da listagem de Artefatos Digitais.")
 
     await campo_busca.click()
-    await campo_busca.fill(ARTEFATO_MODELO_NUMERO)
+    await campo_busca.fill(numero_modelo)
     await campo_busca.press("Enter")
     await page.wait_for_timeout(4000)
 
@@ -895,7 +978,7 @@ async def clonar_ata_modelo(page) -> str:
     except Exception:
         raise RuntimeError(
             f"Não achei a linha do artefato modelo {identificador_modelo} na listagem de Artefatos Digitais "
-            f"mesmo após buscar por {ARTEFATO_MODELO_NUMERO!r}."
+            f"mesmo após buscar por {numero_modelo!r}."
         )
 
     linha_container = linha_num.locator("xpath=ancestor::tr[1]")
@@ -975,6 +1058,102 @@ async def clonar_ata_modelo(page) -> str:
 # fim do texto existente, depois `type()` o valor. Confirmado
 # funcionando: preencher só "Fornecedor:" e "cnpj:" na célula de
 # cabeçalho, sem tocar em endereço/contatos/representante.
+#
+# ETAPA 2 (Checkpoint 1): comparação ao vivo entre a Ata 279 (modelo) e
+# a Ata 283 (concluída, pregão 44/2026) confirmou que as duas têm
+# EXATAMENTE a mesma estrutura de 10 colunas nessa tabela, na mesma
+# ordem. Mas uma investigação anterior (Ata 267) já mostrou um clone
+# com 9 colunas — índice fixo funciona hoje, mas é uma aposta. Por
+# isso o preenchimento passa a resolver o índice de cada campo pelo
+# NOME do cabeçalho (ver mapear_colunas/ler_mapa_colunas_precos
+# abaixo), nunca por posição — mesmo princípio de "casar por nome,
+# nunca por posição" já usado no ATMOS (sync_service.py).
+
+
+class EstruturaAtaNaoReconhecida(Exception):
+    """Levantada quando a tabela de preços ou a célula do fornecedor de
+    um clone não tem a estrutura esperada. Nunca deve ser "contornada"
+    deslocando valores para outra coluna — é sempre um sinal para parar
+    e revisar manualmente o clone/modelo antes de continuar."""
+
+
+COLUNAS_OBRIGATORIAS = [
+    "grupo do tr", "item do tr", "especificação", "marca", "modelo",
+    "unidade", "quantidade máxima", "quantidade mínima", "valor unitário",
+    "prazo de validade",
+]
+
+# Chave usada nos dicts de item (ver montar_itens_para_preenchimento) ->
+# nome normalizado do cabeçalho real da tabela de preços.
+CHAVE_PARA_CABECALHO = {
+    "grupo_tr": "grupo do tr",
+    "item_tr": "item do tr",
+    "especificacao": "especificação",
+    "marca": "marca",
+    "modelo": "modelo",
+    "unidade": "unidade",
+    "quantidade_maxima": "quantidade máxima",
+    "quantidade_minima": "quantidade mínima",
+    "valor_unitario": "valor unitário",
+    "prazo_validade": "prazo de validade",
+}
+
+
+def _normalizar_cabecalho(texto: str) -> str:
+    """Tolera maiúsculas/minúsculas, espaços extras e quebras de linha —
+    o cabeçalho real vem de células de rich-text e pode variar em
+    formatação sem mudar de significado."""
+    return re.sub(r"\s+", " ", (texto or "")).strip().lower()
+
+
+def mapear_colunas(textos_cabecalho: list[str]) -> dict[str, int]:
+    """Monta {nome_normalizado_da_coluna: índice} a partir dos textos das
+    células da linha de cabeçalho (tr[1] da tabela 'DOS PREÇOS'). Função
+    pura — não toca em Playwright, testável sem navegador."""
+    return {
+        _normalizar_cabecalho(texto): indice
+        for indice, texto in enumerate(textos_cabecalho)
+        if _normalizar_cabecalho(texto)
+    }
+
+
+def validar_mapa_colunas(mapa: dict, identificador_ata: str, numero_pregao: str) -> None:
+    """Levanta EstruturaAtaNaoReconhecida se qualquer coluna obrigatória
+    não foi encontrada no cabeçalho real. Chamada ANTES de preencher
+    qualquer item — nunca preenche parcialmente uma estrutura não
+    reconhecida."""
+    faltando = [c for c in COLUNAS_OBRIGATORIAS if c not in mapa]
+    if faltando:
+        raise EstruturaAtaNaoReconhecida(
+            "Estrutura da Ata não reconhecida\n\n"
+            f"Coluna ausente: {faltando[0]!r}\n\n"
+            f"Modelo: {identificador_ata}\n"
+            f"Pregão: {numero_pregao}"
+        )
+
+
+async def ler_mapa_colunas_precos(frame_editor) -> dict[str, int]:
+    """Lê o cabeçalho real (tr[1]) da tabela de preços JÁ ABERTA em
+    `frame_editor` (ver abrir_secao_documento) e monta o mapa de
+    colunas. IMPORTANTE: só lê dentro desse frame já escopado pra seção
+    'DOS PREÇOS' — nunca faz busca no documento inteiro. Isso importa
+    porque a seção '12. ANEXO — Cadastro Reserva' tem uma tabela com
+    cabeçalho quase idêntico a essa; escopar ao frame certo evita
+    qualquer ambiguidade sem precisar de heurística extra."""
+    tabela = frame_editor.locator("table").first
+    celulas_cabecalho = tabela.locator("tr").nth(1).locator("td, th")
+    total = await celulas_cabecalho.count()
+    textos = [await celulas_cabecalho.nth(i).inner_text() for i in range(total)]
+    return mapear_colunas(textos)
+
+
+def celula_fornecedor_valida(texto_celula: str) -> bool:
+    """Confirma que a célula de cabeçalho da tabela de preços realmente
+    contém o bloco Fornecedor/CNPJ/endereço/contato antes de deixar
+    preencher_fornecedor_cnpj escrever nela — nunca escreve numa célula
+    que não parece ser essa, mesmo que o índice (tr[0]/td[2]) bata."""
+    txt = (texto_celula or "").lower()
+    return all(marcador in txt for marcador in ["fornecedor", "cnpj", "endereço", "contato"])
 
 
 async def abrir_secao_documento(page, indice_accordion: int, texto_subitem: str):
@@ -1019,9 +1198,24 @@ async def preencher_fornecedor_cnpj(frame_editor, nome_fornecedor: str, cnpj: st
     (tr[0], td[2]) com os valores dados. NUNCA toca em endereço:,
     contatos: ou representante: — regra do projeto: só a Fornecedor e
     o CNPJ são preenchidos automaticamente, o resto fica para
-    preenchimento manual humano."""
+    preenchimento manual humano.
+
+    Antes de escrever, confirma que a célula realmente contém o bloco
+    Fornecedor/CNPJ/endereço/contato (ver celula_fornecedor_valida) —
+    nunca escreve só confiando no índice tr[0]/td[2], mesmo esse índice
+    já tendo sido confirmado nas Atas 279 e 283."""
     tabela = frame_editor.locator("table").first
     celula_fornecedor = tabela.locator("tr").nth(0).locator("td, th").nth(2)
+
+    texto_atual = await celula_fornecedor.inner_text()
+    if not celula_fornecedor_valida(texto_atual):
+        raise EstruturaAtaNaoReconhecida(
+            "Estrutura da Ata não reconhecida\n\n"
+            "A célula esperada para Fornecedor/CNPJ (tr[0]/td[2]) não contém "
+            "os rótulos esperados (Fornecedor/CNPJ/endereço/contato).\n\n"
+            f"Conteúdo encontrado: {texto_atual[:200]!r}"
+        )
+
     paragrafos = celula_fornecedor.locator("p")
 
     p_fornecedor = paragrafos.nth(0)
@@ -1110,14 +1304,20 @@ async def inserir_linha_tabela(page, celula_referencia, abaixo: bool = True) -> 
     await page.wait_for_timeout(1500)
 
 
-async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
-    """Preenche as 10 células de UMA linha de dado da tabela de itens
-    (já localizada em `linha_tr`, um <tr>) com os campos de `item`:
+async def preencher_linha_item(frame_editor, linha_tr, item: dict, mapa_colunas: dict) -> None:
+    """Preenche as células de UMA linha de dado da tabela de itens (já
+    localizada em `linha_tr`, um <tr>) com os campos de `item`:
     grupo_tr, item_tr, especificacao, marca, modelo, unidade,
     quantidade_maxima, quantidade_minima, valor_unitario e (opcional)
     prazo_validade (default "12 Meses" — a linha original do modelo já
     vem com isso preenchido, mas linhas inseridas via
     inserir_linha_tabela() vêm totalmente vazias).
+
+    `mapa_colunas` (ver ler_mapa_colunas_precos/mapear_colunas) resolve
+    o índice REAL de cada coluna pelo nome do cabeçalho — nunca por
+    posição fixa, pra não escrever num campo errado silenciosamente se
+    um modelo tiver colunas em ordem/quantidade diferente (ver
+    validar_mapa_colunas, chamada antes disso em criar_ata_fornecedor).
 
     Nunca inventa dado: se uma chave obrigatória faltar em `item`,
     levanta erro em vez de deixar a célula em branco silenciosamente
@@ -1131,21 +1331,22 @@ async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
     if faltando:
         raise ValueError(f"Campo(s) obrigatório(s) faltando para preencher a linha do item: {faltando}")
 
-    valores_por_indice = [
-        item["grupo_tr"],
-        item["item_tr"],
-        item["especificacao"],
-        item["marca"],
-        item["modelo"],
-        item["unidade"],
-        item["quantidade_maxima"],
-        item["quantidade_minima"],
-        item["valor_unitario"],
-        item.get("prazo_validade", "12 Meses"),
-    ]
+    valores_por_chave = {
+        "grupo_tr": item["grupo_tr"],
+        "item_tr": item["item_tr"],
+        "especificacao": item["especificacao"],
+        "marca": item["marca"],
+        "modelo": item["modelo"],
+        "unidade": item["unidade"],
+        "quantidade_maxima": item["quantidade_maxima"],
+        "quantidade_minima": item["quantidade_minima"],
+        "valor_unitario": item["valor_unitario"],
+        "prazo_validade": item.get("prazo_validade", "12 Meses"),
+    }
 
     celulas = linha_tr.locator("td, th")
-    for indice, valor in enumerate(valores_por_indice):
+    for chave, valor in valores_por_chave.items():
+        indice = mapa_colunas[CHAVE_PARA_CABECALHO[chave]]
         celula = celulas.nth(indice)
         texto_atual = (await celula.inner_text()).strip()
         if texto_atual:
@@ -1166,10 +1367,14 @@ async def preencher_linha_item(frame_editor, linha_tr, item: dict) -> None:
         await frame_editor.wait_for_timeout(150)
 
 
-async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
+async def preencher_tabela_itens(page, frame_editor, itens: list[dict], mapa_colunas: dict) -> None:
     """Preenche a tabela de 'DOS PREÇOS, ESPECIFICAÇÕES E QUANTITATIVOS'
     com a lista completa de itens de UM fornecedor (a mesma tabela já
     deve ter Fornecedor/CNPJ preenchidos via preencher_fornecedor_cnpj).
+
+    `mapa_colunas` deve vir de ler_mapa_colunas_precos() + já ter
+    passado por validar_mapa_colunas() — essa função não valida de
+    novo, só usa o mapa pra resolver os índices reais.
 
     Cada item de `itens` deve ter as chaves exigidas por
     preencher_linha_item (grupo_tr, item_tr, especificacao, marca,
@@ -1187,7 +1392,7 @@ async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
     tabela = frame_editor.locator("table").first
     linha_atual = tabela.locator("tr").nth(2)
 
-    await preencher_linha_item(frame_editor, linha_atual, itens[0])
+    await preencher_linha_item(frame_editor, linha_atual, itens[0], mapa_colunas)
     log(f"  Item 1/{len(itens)} preenchido (item TR {itens[0].get('item_tr')}).")
 
     for i, item in enumerate(itens[1:], start=2):
@@ -1200,10 +1405,104 @@ async def preencher_tabela_itens(page, frame_editor, itens: list[dict]) -> None:
         total_linhas = await tabela.locator("tr").count()
         linha_atual = tabela.locator("tr").nth(total_linhas - 1)
 
-        await preencher_linha_item(frame_editor, linha_atual, item)
+        await preencher_linha_item(frame_editor, linha_atual, item, mapa_colunas)
         log(f"  Item {i}/{len(itens)} preenchido (item TR {item.get('item_tr')}).")
 
     log(f"Tabela de itens preenchida: {len(itens)} item(ns) no total.")
+
+
+# =========================================================
+# ETAPA 2 (Checkpoint 4) — SEGUNDA VALIDAÇÃO (pós-escrita)
+# =========================================================
+# "Preenchimento sem exceção" não é o mesmo que "preenchimento
+# correto". Depois de preencher_tabela_itens/preencher_fornecedor_cnpj,
+# lê de volta cada célula do DOM e compara com o valor que deveria ter
+# sido escrito — nunca assume que a escrita funcionou só porque não
+# houve erro no meio do caminho.
+
+
+async def conferir_item_preenchido(linha_tr, item: dict, mapa_colunas: dict) -> list[str]:
+    """Lê de volta, célula por célula (pelo mapa de colunas — mesma
+    fonte usada pra escrever), o que está de fato na linha `linha_tr` e
+    compara com o que `item` pedia para escrever. Retorna a lista de
+    divergências (vazia = tudo confere). Comparação de texto exata
+    (após strip) — não normaliza formatação numérica/moeda, para não
+    mascarar uma divergência real como se fosse só diferença de forma."""
+    campos_esperados = {
+        "grupo_tr": item["grupo_tr"],
+        "item_tr": item["item_tr"],
+        "especificacao": item["especificacao"],
+        "marca": item["marca"],
+        "modelo": item["modelo"],
+        "unidade": item["unidade"],
+        "quantidade_maxima": item["quantidade_maxima"],
+        "quantidade_minima": item["quantidade_minima"],
+        "valor_unitario": item["valor_unitario"],
+        "prazo_validade": item.get("prazo_validade", "12 Meses"),
+    }
+
+    divergencias = []
+    celulas = linha_tr.locator("td, th")
+    for chave, esperado in campos_esperados.items():
+        nome_coluna = CHAVE_PARA_CABECALHO[chave]
+        indice = mapa_colunas[nome_coluna]
+        texto_real = (await celulas.nth(indice).inner_text()).strip()
+        if texto_real != str(esperado).strip():
+            divergencias.append(
+                f"item {item.get('item_tr')}: coluna {nome_coluna!r} esperado {str(esperado)!r}, "
+                f"encontrado {texto_real!r}"
+            )
+    return divergencias
+
+
+async def conferir_fornecedor_preenchido(celula_fornecedor, nome_fornecedor: str, cnpj: str) -> list[str]:
+    """Lê de volta a célula de Fornecedor/CNPJ e confirma que o nome e
+    o CNPJ escritos por preencher_fornecedor_cnpj realmente aparecem
+    nela. Retorna a lista de divergências (vazia = tudo confere)."""
+    texto = await celula_fornecedor.inner_text()
+    divergencias = []
+    if nome_fornecedor not in texto:
+        divergencias.append(f"fornecedor esperado {nome_fornecedor!r} não encontrado na célula do cabeçalho.")
+    if cnpj not in texto:
+        divergencias.append(f"CNPJ esperado {cnpj!r} não encontrado na célula do cabeçalho.")
+    return divergencias
+
+
+async def conferir_tabela_itens_preenchida(frame_editor, itens: list[dict], mapa_colunas: dict) -> list[str]:
+    """Confere TODAS as linhas de dado escritas por preencher_tabela_itens
+    (tr[2] em diante, na mesma ordem de `itens`) e retorna a lista
+    combinada de divergências de todos os itens (vazia = tudo confere)."""
+    tabela = frame_editor.locator("table").first
+    divergencias = []
+    for i, item in enumerate(itens):
+        linha_tr = tabela.locator("tr").nth(2 + i)
+        divergencias.extend(await conferir_item_preenchido(linha_tr, item, mapa_colunas))
+    return divergencias
+
+
+def validar_isolamento_itens(itens_para_preencher: list[dict], itens_coletados: list[dict], nome_fornecedor: str) -> None:
+    """Confirma que os itens que vão ser escritos na tabela de preços
+    (`itens_para_preencher`, já cruzados com TR/quantidades) são
+    EXATAMENTE os itens coletados para este fornecedor — nunca um
+    subconjunto diferente por alguma falha de cruzamento silenciosa,
+    e nunca item de outro Pregão/fornecedor. Levanta ValueError se
+    não bater; não escreve nada nesse caso (chamada antes de abrir a
+    seção 'DOS PREÇOS')."""
+    numeros_item_fornecedor = {item["numero_item"] for item in itens_coletados}
+    numeros_item_preenchidos = {item["item_tr"] for item in itens_para_preencher}
+    if numeros_item_preenchidos != numeros_item_fornecedor:
+        raise ValueError(
+            f"Itens a preencher ({sorted(numeros_item_preenchidos)}) não batem com os itens coletados "
+            f"para {nome_fornecedor} ({sorted(numeros_item_fornecedor)}) — abortando antes de escrever, "
+            f"nunca misturando itens de fornecedores diferentes."
+        )
+
+
+def decidir_estado_apos_conferencia(divergencias: list[str]) -> str:
+    """Regra central do Checkpoint 4: só ESTADO_RASCUNHO quando a
+    conferência pós-escrita não achou NENHUMA divergência. Qualquer
+    divergência -> ESTADO_REVISAO_NECESSARIA, nunca RASCUNHO."""
+    return ESTADO_REVISAO_NECESSARIA if divergencias else ESTADO_RASCUNHO
 
 
 # =========================================================
@@ -1485,23 +1784,53 @@ def montar_itens_para_preenchimento(
     return resultado
 
 
-async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict) -> str:
+async def criar_ata_fornecedor(
+    page, processo_id: str, cnpj: str, nome_fornecedor: str, itens_coletados: list[dict], itens_tr: dict,
+) -> dict:
     """Cria a ata completa de UM fornecedor: clona a Ata 279, preenche
     Fornecedor/CNPJ, preenche a tabela de itens com todos os dados
-    combinados, e remove das tabelas UGG/UGP os itens que não
-    pertencem a esse fornecedor. Deixa o clone como RASCUNHO pronto
-    pra revisão humana — NUNCA clica em "Concluir".
+    combinados, CONFERE de volta tudo o que escreveu (Checkpoint 4 —
+    nunca considera a ata válida só porque não houve exceção), e só
+    então remove das tabelas UGG/UGP os itens que não pertencem a esse
+    fornecedor. Deixa o clone pronto pra revisão humana — NUNCA clica
+    em "Concluir".
+
+    `processo_id` é a âncora obrigatória (Etapa 1): validado logo no
+    início (processos_repo.validar_processo) — nunca só recebido e
+    ignorado. O número do pregão usado no restante da função (contexto
+    da mensagem de erro de estrutura, ver validar_mapa_colunas) vem do
+    PRÓPRIO processo validado, nunca de um parâmetro solto.
 
     Deve ser chamada com `page` já na tela de listagem de Artefatos
     Digitais (.../comprasnet-artefatos-web/leitor-artefato).
 
-    Retorna o identificador do clone criado (ex: "308/2026")."""
-    identificador = await clonar_ata_modelo(page)
+    Retorna um dict {"identificador", "estado", "divergencias"}:
+    - estado = ESTADO_RASCUNHO: preenchimento conferido, sem
+      divergências, UGG/UGP já limpo — pronto pra revisão humana.
+    - estado = ESTADO_REVISAO_NECESSARIA: alguma divergência foi
+      encontrada na conferência pós-escrita; a remoção UGG/UGP NÃO foi
+      executada (para não continuar mexendo num clone já sabidamente
+      inconsistente) — `identificador` aponta pro clone exato que
+      precisa de revisão manual antes de qualquer outra ação.
+
+    Falhas de PRÉ-validação (estrutura não reconhecida, dado faltando
+    pra montar os itens) continuam levantando exceção normalmente —
+    nada foi escrito ainda nesses casos, não há o que "revisar"."""
+    processo = processos_repo.validar_processo(processo_id)
+    numero_pregao = processo["pregaoCompleto"]
+
+    # Checkpoint 3: qual modelo clonar passa a ser decidido por
+    # obter_modelo_ata (hoje sempre 279 — ver docstring dela), não mais
+    # lido direto das constantes do módulo dentro de clonar_ata_modelo.
+    modelo = obter_modelo_ata(processo_id)
+    identificador = await clonar_ata_modelo(page, modelo["numero"], modelo["ano"])
 
     # As tabelas de Quantidade Mínima/Máxima ficam na seção
     # "GERENCIADOR" (ÓRGÃO(S) GERENCIADOR E PARTICIPANTE(S)), não na
     # de "DOS PREÇOS" — precisa extrair de lá ANTES de montar os itens
-    # que vão ser preenchidos na tabela de preços.
+    # que vão ser preenchidos na tabela de preços. Confirmado ao vivo
+    # (Ata 283, item 6: Máxima=9/Mínima=2 batem exatamente com a coluna
+    # A dessas tabelas) — fonte preservada sem mudança nesta etapa.
     frame_gerenciador = await abrir_secao_documento(page, 1, "GERENCIADOR")
     quantidades_minimas = await extrair_tabela_quantidades(frame_gerenciador, 1)
     quantidades_maximas = await extrair_tabela_quantidades(frame_gerenciador, 2)
@@ -1510,9 +1839,43 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
         itens_coletados, itens_tr, quantidades_minimas, quantidades_maximas
     )
 
+    # Isolamento: os itens que vão ser escritos na tabela de preços
+    # precisam ser EXATAMENTE os itens deste fornecedor — nunca um
+    # subconjunto diferente por alguma falha de cruzamento silenciosa,
+    # nunca item de outro Pregão/fornecedor.
+    validar_isolamento_itens(itens_para_preencher, itens_coletados, nome_fornecedor)
+
     frame_editor = await abrir_secao_documento(page, 1, "DOS PREÇOS")
+
+    # Lê a estrutura real pelo cabeçalho ANTES de preencher qualquer
+    # coisa — nunca escreve por posição fixa (ver ETAPA 2, comparação
+    # 279x283: estrutura bate hoje, mas a Ata 267 já mostrou um modelo
+    # com 9 colunas; isso detecta esse caso e para, em vez de escrever
+    # o valor errado na célula errada silenciosamente).
+    mapa_colunas = await ler_mapa_colunas_precos(frame_editor)
+    validar_mapa_colunas(mapa_colunas, identificador, numero_pregao)
+
     await preencher_fornecedor_cnpj(frame_editor, nome_fornecedor, cnpj)
-    await preencher_tabela_itens(page, frame_editor, itens_para_preencher)
+    await preencher_tabela_itens(page, frame_editor, itens_para_preencher, mapa_colunas)
+
+    # SEGUNDA VALIDAÇÃO (Checkpoint 4): lê de volta o que foi
+    # efetivamente escrito e compara com o que deveria estar lá.
+    # "Preenchimento sem exceção" não é o mesmo que "preenchimento
+    # correto" — só chega em RASCUNHO quem passar por aqui sem
+    # divergência nenhuma.
+    tabela_precos = frame_editor.locator("table").first
+    celula_fornecedor = tabela_precos.locator("tr").nth(0).locator("td, th").nth(2)
+    divergencias = await conferir_fornecedor_preenchido(celula_fornecedor, nome_fornecedor, cnpj)
+    divergencias += await conferir_tabela_itens_preenchida(frame_editor, itens_para_preencher, mapa_colunas)
+
+    estado = decidir_estado_apos_conferencia(divergencias)
+    if estado == ESTADO_REVISAO_NECESSARIA:
+        log(f"  ⚠ Ata {identificador} ({nome_fornecedor}): {len(divergencias)} divergência(s) na conferência "
+            f"pós-escrita — estado REVISÃO NECESSÁRIA. Remoção UGG/UGP NÃO executada (não continuar mexendo "
+            f"num clone já sabidamente inconsistente). Revisar manualmente:")
+        for d in divergencias:
+            log(f"    - {d}")
+        return {"identificador": identificador, "estado": estado, "divergencias": divergencias}
 
     # A remoção UGG é idempotente (relê o estado atual da tabela a cada
     # chamada e só remove o que ainda precisa) — diferente do
@@ -1536,19 +1899,21 @@ async def criar_ata_fornecedor(page, cnpj: str, nome_fornecedor: str, itens_cole
 
     if ultimo_erro is not None:
         raise RuntimeError(
-            f"Ata {identificador} ({nome_fornecedor}) ficou com Fornecedor/CNPJ e itens preenchidos, "
-            f"mas a remoção das tabelas UGG/UGP falhou 3 vezes seguidas. NÃO crie outra ata para este "
-            f"fornecedor — volte a este mesmo clone ({identificador}) e rode remover_itens_nao_pertencentes_ugg() "
-            f"de novo depois de confirmar que o sistema está respondendo normalmente. Último erro: {ultimo_erro}"
+            f"Ata {identificador} ({nome_fornecedor}) ficou com Fornecedor/CNPJ e itens preenchidos e "
+            f"conferidos, mas a remoção das tabelas UGG/UGP falhou 3 vezes seguidas. NÃO crie outra ata para "
+            f"este fornecedor — volte a este mesmo clone ({identificador}) e rode "
+            f"remover_itens_nao_pertencentes_ugg() de novo depois de confirmar que o sistema está respondendo "
+            f"normalmente. Último erro: {ultimo_erro}"
         )
 
     log(f"Ata {identificador} criada para {nome_fornecedor} ({cnpj}) com {len(itens_para_preencher)} item(ns). "
-        f"RASCUNHO pronto para revisão humana — 'Concluir' NÃO foi clicado.")
-    return identificador
+        f"Preenchimento conferido, dados batem — RASCUNHO pronto para revisão humana. "
+        f"'Concluir' NÃO foi clicado.")
+    return {"identificador": identificador, "estado": ESTADO_RASCUNHO, "divergencias": []}
 
 
 async def criar_atas_todos_fornecedores(
-    page, fornecedores: list[dict], itens_tr: dict, arquivo_relatorio: str | None = None
+    page, processo_id: str, fornecedores: list[dict], itens_tr: dict, arquivo_relatorio: str | None = None
 ) -> list[dict]:
     """Chama criar_ata_fornecedor() para cada fornecedor de
     `fornecedores` (formato retornado por coletar_fornecedores_itens —
@@ -1556,13 +1921,21 @@ async def criar_atas_todos_fornecedores(
     fornecedor + CNPJ + identificador da ata (número/ano) criada para
     ele, ou o motivo da falha se não deu certo.
 
+    `processo_id` é validado uma vez aqui, ANTES de tocar no navegador
+    (falha rápido se o processo não existir/não estiver confirmado), e
+    de novo dentro de cada criar_ata_fornecedor() — validação em
+    profundidade, nunca confiando que já foi checado antes.
+
     Se um fornecedor falhar (mesmo depois dos retries internos de
-    criar_ata_fornecedor), o loop PARA nele — não segue criando atas
-    novas pros fornecedores seguintes. Pedido explícito do usuário:
-    se der erro, não ficar criando mais artefatos, voltar e corrigir o
-    que já existe antes de continuar. O relatório (e o CSV, se
-    `arquivo_relatorio` foi passado) mostra o que já deu certo até ali
-    e o erro exato do fornecedor que travou o processo.
+    criar_ata_fornecedor) OU terminar em ESTADO_REVISAO_NECESSARIA (a
+    conferência pós-escrita achou divergência — Checkpoint 4), o loop
+    PARA nele — não segue criando atas novas pros fornecedores
+    seguintes. Pedido explícito do usuário: proteção contra erro
+    silencioso vale mais que velocidade; se algo não bateu, voltar e
+    corrigir o que já existe antes de continuar. O relatório (e o CSV,
+    se `arquivo_relatorio` foi passado) mostra o que já deu certo até
+    ali e o motivo exato (erro ou divergências) do que travou o
+    processo.
 
     Se `arquivo_relatorio` for informado, salva a relação em CSV (nome,
     cnpj, identificador_ata, status) depois de CADA fornecedor
@@ -1573,6 +1946,8 @@ async def criar_atas_todos_fornecedores(
 
     Deve ser chamada com `page` já na tela de listagem de Artefatos
     Digitais."""
+    processos_repo.validar_processo(processo_id)
+
     relatorio = []
 
     fornecedores_com_itens = [f for f in fornecedores if f.get("itens")]
@@ -1584,24 +1959,33 @@ async def criar_atas_todos_fornecedores(
         log(f"[{i}/{len(fornecedores_com_itens)}] {nome} ({cnpj}) — {len(fornecedor['itens'])} item(ns)...")
 
         try:
-            identificador = await criar_ata_fornecedor(page, cnpj, nome, fornecedor["itens"], itens_tr)
-            relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": identificador, "status": "OK"})
+            resultado = await criar_ata_fornecedor(page, processo_id, cnpj, nome, fornecedor["itens"], itens_tr)
+            relatorio.append({
+                "fornecedor": nome, "cnpj": cnpj,
+                "ata": resultado["identificador"], "status": resultado["estado"],
+                "divergencias": resultado["divergencias"],
+            })
         except Exception as e:
             log(f"  ⚠ Falha ao criar ata para {nome} ({cnpj}) — PARANDO o processo aqui (não vou criar mais "
                 f"atas até isso ser revisado). Erro: {e}")
-            relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": "", "status": f"ERRO: {e}"})
+            relatorio.append({"fornecedor": nome, "cnpj": cnpj, "ata": "", "status": f"ERRO: {e}", "divergencias": []})
             if arquivo_relatorio:
                 with open(arquivo_relatorio, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=["fornecedor", "cnpj", "ata", "status"])
                     writer.writeheader()
-                    writer.writerows(relatorio)
+                    writer.writerows({k: v for k, v in r.items() if k != "divergencias"} for r in relatorio)
             raise
 
         if arquivo_relatorio:
             with open(arquivo_relatorio, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=["fornecedor", "cnpj", "ata", "status"])
                 writer.writeheader()
-                writer.writerows(relatorio)
+                writer.writerows({k: v for k, v in r.items() if k != "divergencias"} for r in relatorio)
+
+        if resultado["estado"] == ESTADO_REVISAO_NECESSARIA:
+            log(f"  ⚠ Ata {resultado['identificador']} de {nome} ({cnpj}) ficou em REVISÃO NECESSÁRIA — "
+                f"PARANDO o processo aqui (não vou criar mais atas até isso ser revisado manualmente).")
+            break
 
         # de volta pra listagem, pronto pro próximo fornecedor
         try:

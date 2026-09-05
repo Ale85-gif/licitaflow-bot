@@ -24,6 +24,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -46,6 +47,8 @@ from verificacao.relatorio import gerar_relatorio
 from verificacao.sicaf import consultar_sicaf
 from bot_controle import status_publico as bot_status_publico
 
+import processos_repo
+
 load_dotenv()
 
 RAIZ = Path(__file__).resolve().parent
@@ -56,6 +59,11 @@ ANEXOS_DIR = RAIZ / "licitaflow" / "anexos"
 ANEXOS_INDEX = ANEXOS_DIR / "index.json"
 ATAS_GERADAS_ARQUIVO = RAIZ / "licitaflow" / "atas_geradas.json"
 COMPROVANTES_DIR = RAIZ / "licitaflow" / "comprovantes_manuais"
+COLETAS_HISTORICO_ARQUIVO = RAIZ / "logs" / "coletas_historico.json"
+# Leitura/gravação de processos.json e a validação de processo_id vivem em
+# processos_repo.py (compartilhado com bot_criar_ata.py - ver ETAPA 2
+# Checkpoint 2) para não duplicar a mesma lógica em dois lugares.
+UASG_FIXA = processos_repo.UASG_FIXA
 
 TTL_CACHE_SEGUNDOS = 120
 
@@ -65,9 +73,12 @@ PYTHON_VENV = r"C:\venvs\meu_projeto_python\Scripts\python.exe"
 BOT_COLETA = RAIZ / "Bot comprasnet rapido.py"
 ABRIR_LICITAFLOW = RAIZ / "abrir_licitaflow.py"
 CAPTURAR_FASE = RAIZ / "capturar_fase.py"
+PREPARAR_ATAS_SCRIPT = RAIZ / "preparar_atas_processo.py"
 COLETA_LOG = RAIZ / "logs" / "coleta_painel.log"
 CONECTAR_LOG = RAIZ / "logs" / "conectar_painel.log"
 FASE_LOG = RAIZ / "logs" / "fase_painel.log"
+PREPARAR_ATAS_LOG = RAIZ / "logs" / "preparar_atas_painel.log"
+PREPARAR_ATAS_STATUS_ARQUIVO = RAIZ / "logs" / "preparar_atas_status.json"
 CDP_URL = "http://127.0.0.1:9222/json/version"
 DB_PATH = RAIZ / "dados.db"
 
@@ -76,6 +87,7 @@ app = FastAPI(title="LicitaFlow")
 _cache: dict = {"em": None, "pregoes": []}
 _coleta_processo: Optional[subprocess.Popen] = None
 _conectar_processo: Optional[subprocess.Popen] = None
+_preparar_atas_processo: Optional[subprocess.Popen] = None
 
 
 def _chrome_debug_ativo() -> bool:
@@ -240,6 +252,31 @@ def _salvar_atas_geradas(indice: dict) -> None:
     ATAS_GERADAS_ARQUIVO.write_text(json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _carregar_coletas() -> list[dict]:
+    if not COLETAS_HISTORICO_ARQUIVO.exists():
+        return []
+    try:
+        return json.loads(COLETAS_HISTORICO_ARQUIVO.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _registrar_coleta(ok: bool, msg: str) -> None:
+    """Grava o resultado de uma coleta em disco -- sem isso, 'Últimas coletas'
+    esvaziava a cada reload da página porque só existia em memória no JS."""
+    historico = _carregar_coletas()
+    historico.insert(0, {
+        "em": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "ok": ok,
+        "msg": msg,
+    })
+    historico = historico[:8]
+    COLETAS_HISTORICO_ARQUIVO.parent.mkdir(parents=True, exist_ok=True)
+    COLETAS_HISTORICO_ARQUIVO.write_text(
+        json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def _carregar_fases() -> dict[str, dict]:
     """Lê a tabela `pregoes_fase` (gravada por capturar_fase.py — Etapa 2.5).
     Só leitura, tabela própria, não mexe em nada que os outros bots usam."""
@@ -288,7 +325,7 @@ def _status() -> dict:
             "expiraEm": None,
             "usuario": "Chrome da automação",
         },
-        "coletas": [],
+        "coletas": _carregar_coletas(),
         "pregoes": _cache["pregoes"],
     }
 
@@ -364,6 +401,12 @@ async def gerar_ata_parcial(numero: str, corpo: dict):
     if not itens:
         return JSONResponse({"ok": False, "erro": "sem_itens"}, status_code=400)
 
+    processo_id = corpo.get("processoId")
+    processos = processos_repo.carregar_processos()
+    processo = processos.get(processo_id) if processo_id else None
+    if not processo or processo.get("pregaoCompleto") != numero:
+        return JSONResponse({"ok": False, "erro": "processo_nao_confirmado"}, status_code=409)
+
     indice = _carregar_atas_geradas()
     existentes = indice.setdefault(numero, [])
 
@@ -376,10 +419,207 @@ async def gerar_ata_parcial(numero: str, corpo: dict):
         "id": int(datetime.now().timestamp() * 1000),
         "itens": novos,
         "criadaEm": datetime.now().isoformat(),
+        "processoId": processo_id,
     })
     _salvar_atas_geradas(indice)
 
     return {"ok": True}
+
+
+# ── Identificação do Processo (Pregão + TR) antes de gerar Ata ──────────────
+
+@app.post("/api/processos/localizar")
+def localizar_processo(corpo: dict):
+    uasg = str(corpo.get("uasg", "")).strip()
+    pregao = str(corpo.get("pregao", "")).strip()
+    tr = str(corpo.get("tr", "")).strip()
+    numero_processo = str(corpo.get("numeroProcesso", "")).strip()
+
+    if uasg != UASG_FIXA:
+        return {"ok": False, "motivo": "uasg_incompativel"}
+
+    pregoes = {p["numero"]: p for p in _carregar_pregoes()}
+    pregao_dado = pregoes.get(pregao)
+    if not pregao_dado:
+        return {"ok": False, "motivo": "pregao_nao_encontrado"}
+
+    anexo = _carregar_anexos().get(pregao)
+    if not anexo:
+        return {
+            "ok": False,
+            "motivo": "tr_nao_encontrado",
+            "detalhe": "Nenhum Termo de Referência anexado para este pregão. Envie o PDF do TR na aba do pregão primeiro.",
+        }
+
+    num_pregao, ano_pregao = processos_repo.partir_composto(pregao)
+    num_tr, ano_tr = processos_repo.partir_composto(tr)
+
+    resposta = {
+        "ok": True,
+        "processo": {
+            "uasg": uasg,
+            "pregao": pregao,
+            "numeroPregao": num_pregao,
+            "anoPregao": ano_pregao,
+            "tr": tr,
+            "numeroTR": num_tr,
+            "anoTR": ano_tr,
+            "numeroProcesso": numero_processo,
+            "objeto": pregao_dado.get("objeto", ""),
+        },
+    }
+
+    anterior = processos_repo.processo_confirmado_para(pregao)
+    if anterior and (
+        (tr and anterior.get("tr") and anterior["tr"] != tr)
+        or (numero_processo and anterior.get("numeroProcesso") and anterior["numeroProcesso"] != numero_processo)
+    ):
+        resposta["aviso"] = "conflito_com_processo_anterior"
+        resposta["processoAnterior"] = {
+            "tr": anterior.get("tr"),
+            "numeroProcesso": anterior.get("numeroProcesso"),
+            "confirmadoEm": anterior.get("confirmadoEm"),
+        }
+
+    return resposta
+
+
+@app.post("/api/processos/confirmar")
+def confirmar_processo(corpo: dict):
+    uasg = str(corpo.get("uasg", "")).strip()
+    pregao = str(corpo.get("pregao", "")).strip()
+    tr = str(corpo.get("tr", "")).strip()
+    numero_processo = str(corpo.get("numeroProcesso", "")).strip()
+
+    if uasg != UASG_FIXA or not pregao or not tr:
+        return JSONResponse({"ok": False, "erro": "dados_incompletos"}, status_code=400)
+
+    num_pregao, ano_pregao = processos_repo.partir_composto(pregao)
+    num_tr, ano_tr = processos_repo.partir_composto(tr)
+    processo_id = processos_repo.montar_processo_id(uasg, num_pregao, ano_pregao, num_tr, ano_tr)
+
+    pregoes = {p["numero"]: p for p in _carregar_pregoes()}
+    pregao_dado = pregoes.get(pregao, {})
+
+    processos = processos_repo.carregar_processos()
+    processos[processo_id] = {
+        "uasg": uasg,
+        "numeroPregao": num_pregao,
+        "anoPregao": ano_pregao,
+        "tr": tr,
+        "numeroTR": num_tr,
+        "anoTR": ano_tr,
+        "numeroProcesso": numero_processo,
+        "pregaoCompleto": pregao,
+        "objeto": pregao_dado.get("objeto", ""),
+        "confirmadoEm": datetime.now().isoformat(),
+    }
+    processos_repo.salvar_processos(processos)
+
+    return {"ok": True, "processoId": processo_id}
+
+
+@app.get("/api/processos/por-pregao/{numero:path}")
+def processo_por_pregao(numero: str):
+    processo = processos_repo.processo_confirmado_para(numero)
+    return {"processo": processo}
+
+
+# ── ETAPA 2 (Checkpoint 5): preparação real das Atas de um processo ─────────
+# api.py só valida contexto, inicia preparar_atas_processo.py em background
+# e lê o que ele escreve — a orquestração de verdade (Checkpoints 1-4) mora
+# inteira em bot_criar_ata.py/processos_repo.py, nunca duplicada aqui.
+
+def _ler_relatorio_csv(processo_id: str) -> list[dict]:
+    """Lê o CSV que criar_atas_todos_fornecedores já grava incrementalmente
+    (fornecedor/cnpj/ata/status) depois de CADA fornecedor processado —
+    é daí que vem o progresso real "durante" a preparação, sem precisar
+    duplicar nada dentro de bot_criar_ata.py."""
+    caminho = RAIZ / "logs" / f"preparar_atas_{processo_id}.csv"
+    if not caminho.exists():
+        return []
+    import csv as csv_mod
+    with caminho.open(newline="", encoding="utf-8") as f:
+        return list(csv_mod.DictReader(f, delimiter=","))
+
+
+def _acompanhar_preparo_atas(processo: subprocess.Popen, log_arquivo) -> None:
+    """Roda numa thread separada — só espera o subprocesso terminar e
+    fecha o log. O histórico persistido (licitaflow/preparacoes_atas.json)
+    já é gravado pelo próprio preparar_atas_processo.py ao final, não
+    duplicado aqui."""
+    processo.wait()
+    log_arquivo.close()
+
+
+@app.post("/api/processos/{processo_id}/atas/preparar")
+def preparar_atas(processo_id: str):
+    global _preparar_atas_processo
+
+    # Backend é a autoridade — valida de novo aqui, nunca confia que o
+    # frontend só mostrou o botão porque "achava" que o processo tava
+    # confirmado. Bloqueia mesmo que alguém chame o endpoint direto.
+    try:
+        processos_repo.validar_processo(processo_id)
+    except processos_repo.ProcessoNaoConfirmado:
+        return JSONResponse({"ok": False, "erro": "processo_nao_confirmado"}, status_code=409)
+
+    if _preparar_atas_processo is not None and _preparar_atas_processo.poll() is None:
+        return JSONResponse(
+            {"ok": False, "erro": "preparo_em_andamento", "detalhe": "Já existe uma preparação de Atas rodando."},
+            status_code=409,
+        )
+
+    if not _chrome_debug_ativo():
+        return JSONResponse(
+            {"ok": False, "erro": "chrome_nao_conectado", "detalhe": "Conecte o Chrome da automação antes de preparar Atas."},
+            status_code=409,
+        )
+
+    # Zera o status desta execução — o painel não deve ver eventos de uma
+    # preparação anterior misturados com a atual.
+    PREPARAR_ATAS_STATUS_ARQUIVO.parent.mkdir(parents=True, exist_ok=True)
+    PREPARAR_ATAS_STATUS_ARQUIVO.write_text(
+        json.dumps({"processoId": processo_id, "eventos": [], "concluido": False, "resultado": None}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    PREPARAR_ATAS_LOG.parent.mkdir(exist_ok=True)
+    log_arquivo = open(PREPARAR_ATAS_LOG, "w", encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+    _preparar_atas_processo = subprocess.Popen(
+        [PYTHON_VENV, str(PREPARAR_ATAS_SCRIPT), processo_id],
+        cwd=str(RAIZ),
+        stdout=log_arquivo,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+    threading.Thread(
+        target=_acompanhar_preparo_atas, args=(_preparar_atas_processo, log_arquivo), daemon=True
+    ).start()
+
+    return {"ok": True, "detalhe": "Preparação de Atas iniciada em background."}
+
+
+@app.get("/api/processos/{processo_id}/atas/preparar/status")
+def preparar_atas_status(processo_id: str):
+    rodando = _preparar_atas_processo is not None and _preparar_atas_processo.poll() is None
+
+    status = {"processoId": processo_id, "eventos": [], "concluido": False, "resultado": None}
+    if PREPARAR_ATAS_STATUS_ARQUIVO.exists():
+        try:
+            status = json.loads(PREPARAR_ATAS_STATUS_ARQUIVO.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    return {
+        "rodando": rodando,
+        "eventos": status.get("eventos", []),
+        "atas": _ler_relatorio_csv(processo_id),
+        "concluido": status.get("concluido", False),
+        "resultado": status.get("resultado"),
+    }
 
 
 def _aplicar_confirmacoes_manuais(cnpj: str, resultados: list[dict]) -> None:
@@ -516,6 +756,17 @@ def conectar():
     return {"ok": True, "detalhe": "Abrindo Chrome... Faça login no Compras.gov.br quando a janela aparecer."}
 
 
+def _acompanhar_coleta(processo: subprocess.Popen, log_arquivo) -> None:
+    """Roda numa thread separada: espera o bot terminar e grava o
+    resultado real (código de saída) no histórico persistido em disco."""
+    codigo = processo.wait()
+    log_arquivo.close()
+    if codigo == 0:
+        _registrar_coleta(True, "Coleta concluída — dados atualizados.")
+    else:
+        _registrar_coleta(False, f"Coleta terminou com erro (código {codigo}).")
+
+
 @app.post("/api/coletar")
 def coletar():
     global _coleta_processo
@@ -524,6 +775,12 @@ def coletar():
         return {
             "ok": False,
             "detalhe": "Já tem uma coleta rodando em background. Aguarde terminar antes de disparar outra.",
+        }
+
+    if not _chrome_debug_ativo():
+        return {
+            "ok": False,
+            "detalhe": "Chrome da automação não está aberto. Clique em 'Conectar' e faça login antes de coletar.",
         }
 
     COLETA_LOG.parent.mkdir(exist_ok=True)
@@ -537,6 +794,9 @@ def coletar():
         stderr=subprocess.STDOUT,
         env=env,
     )
+    threading.Thread(
+        target=_acompanhar_coleta, args=(_coleta_processo, log_arquivo), daemon=True
+    ).start()
 
     return {
         "ok": True,
